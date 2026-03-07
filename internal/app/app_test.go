@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +11,10 @@ import (
 
 type appLoginResponse struct {
 	AccessToken string `json:"access_token"`
+}
+
+type appKnowledgeBaseResponse struct {
+	ID string `json:"id"`
 }
 
 func TestNewWiresAuthRoutes(t *testing.T) {
@@ -39,6 +44,75 @@ func TestNewWiresAuthRoutes(t *testing.T) {
 func TestNewWiresTicketRoutes(t *testing.T) {
 	t.Setenv("AUTH_SIGNING_KEY", "test-signing-key")
 	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
+
+	application, accessToken := bootstrapLoggedInApplication(t)
+
+	createTicketRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/tickets",
+		bytes.NewBufferString(`{"title":"VPN 无法连接","description":"今天上午开始无法连接公司 VPN","category":"network","priority":"high"}`),
+	)
+	createTicketRequest.Header.Set("Content-Type", "application/json")
+	createTicketRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	createTicketRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(createTicketRecorder, createTicketRequest)
+
+	if createTicketRecorder.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusCreated, createTicketRecorder.Code, createTicketRecorder.Body.String())
+	}
+}
+
+func TestNewWiresKnowledgeRoutes(t *testing.T) {
+	t.Setenv("AUTH_SIGNING_KEY", "test-signing-key")
+	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
+
+	application, accessToken := bootstrapLoggedInApplication(t)
+
+	createKnowledgeBaseRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/knowledge/bases",
+		bytes.NewBufferString(`{"name":"IT 支持知识库","description":"用于沉淀 IT 文档"}`),
+	)
+	createKnowledgeBaseRequest.Header.Set("Content-Type", "application/json")
+	createKnowledgeBaseRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	createKnowledgeBaseRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(createKnowledgeBaseRecorder, createKnowledgeBaseRequest)
+
+	if createKnowledgeBaseRecorder.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected knowledge base status %d, got %d, body=%s", stdhttp.StatusCreated, createKnowledgeBaseRecorder.Code, createKnowledgeBaseRecorder.Body.String())
+	}
+
+	var knowledgeBaseResponse appKnowledgeBaseResponse
+	if err := json.NewDecoder(createKnowledgeBaseRecorder.Body).Decode(&knowledgeBaseResponse); err != nil {
+		t.Fatalf("decode knowledge base response: %v", err)
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	fileWriter, err := writer.CreateFormFile("file", "vpn-guide.pdf")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fileWriter.Write([]byte("hello knowledge")); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	uploadRequest := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/knowledge/bases/"+knowledgeBaseResponse.ID+"/documents", body)
+	uploadRequest.Header.Set("Content-Type", writer.FormDataContentType())
+	uploadRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	uploadRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(uploadRecorder, uploadRequest)
+
+	if uploadRecorder.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected upload status %d, got %d, body=%s", stdhttp.StatusCreated, uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+}
+
+func bootstrapLoggedInApplication(t *testing.T) (*App, string) {
+	t.Helper()
 
 	application, err := New()
 	if err != nil {
@@ -74,17 +148,5 @@ func TestNewWiresTicketRoutes(t *testing.T) {
 		t.Fatalf("decode login response: %v", err)
 	}
 
-	createTicketRequest := httptest.NewRequest(
-		stdhttp.MethodPost,
-		"/api/v1/tickets",
-		bytes.NewBufferString(`{"title":"VPN 无法连接","description":"今天上午开始无法连接公司 VPN","category":"network","priority":"high"}`),
-	)
-	createTicketRequest.Header.Set("Content-Type", "application/json")
-	createTicketRequest.Header.Set("Authorization", "Bearer "+loginResponse.AccessToken)
-	createTicketRecorder := httptest.NewRecorder()
-	application.server.Handler.ServeHTTP(createTicketRecorder, createTicketRequest)
-
-	if createTicketRecorder.Code != stdhttp.StatusCreated {
-		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusCreated, createTicketRecorder.Code, createTicketRecorder.Body.String())
-	}
+	return application, loginResponse.AccessToken
 }
