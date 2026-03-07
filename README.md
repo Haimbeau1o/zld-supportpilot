@@ -40,10 +40,16 @@
 - `GET /api/v1/tickets/{id}`
 - `POST /api/v1/tickets/{id}/assign`
 - `POST /api/v1/tickets/{id}/status`
+- `POST /api/v1/knowledge/bases`
+- `GET /api/v1/knowledge/bases`
+- `POST /api/v1/knowledge/bases/{id}/documents`
+- `GET /api/v1/knowledge/bases/{id}/documents`
+- `GET /api/v1/knowledge/documents/{id}`
 - 环境变量加载与应用装配骨架
 - 基于 JWT 的最小认证链路
 - 基于租户角色的 RBAC 权限映射
 - 基于显式状态机的工单主流程
+- 基于知识库容器与元数据记录的文档上传链路
 
 ## 学习型研发流程
 
@@ -119,23 +125,29 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
   }'
 ```
 
-创建工单：
+创建知识库：
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/tickets \
+curl -X POST http://localhost:8080/api/v1/knowledge/bases \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <access_token>' \
   -d '{
-    "title": "VPN 无法连接",
-    "description": "今天上午开始无法连接公司 VPN",
-    "category": "network",
-    "priority": "high"
+    "name": "IT 支持知识库",
+    "description": "用于沉淀 IT 文档"
   }'
 ```
 
-查询当前用户可见工单：
+上传文档：
 
 ```bash
-curl http://localhost:8080/api/v1/tickets \
+curl -X POST http://localhost:8080/api/v1/knowledge/bases/<knowledge_base_id>/documents \
+  -H 'Authorization: Bearer <access_token>' \
+  -F 'file=@./vpn-guide.pdf'
+```
+
+查询知识库列表：
+
+```bash
+curl http://localhost:8080/api/v1/knowledge/bases \
   -H 'Authorization: Bearer <access_token>'
 ```
