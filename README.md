@@ -35,9 +35,15 @@
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`
 - `GET /api/v1/auth/me`
+- `POST /api/v1/tickets`
+- `GET /api/v1/tickets`
+- `GET /api/v1/tickets/{id}`
+- `POST /api/v1/tickets/{id}/assign`
+- `POST /api/v1/tickets/{id}/status`
 - 环境变量加载与应用装配骨架
 - 基于 JWT 的最小认证链路
 - 基于租户角色的 RBAC 权限映射
+- 基于显式状态机的工单主流程
 
 ## 学习型研发流程
 
@@ -113,9 +119,23 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
   }'
 ```
 
-获取当前身份：
+创建工单：
 
 ```bash
-curl http://localhost:8080/api/v1/auth/me \
+curl -X POST http://localhost:8080/api/v1/tickets \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{
+    "title": "VPN 无法连接",
+    "description": "今天上午开始无法连接公司 VPN",
+    "category": "network",
+    "priority": "high"
+  }'
+```
+
+查询当前用户可见工单：
+
+```bash
+curl http://localhost:8080/api/v1/tickets \
   -H 'Authorization: Bearer <access_token>'
 ```
