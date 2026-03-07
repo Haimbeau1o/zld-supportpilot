@@ -9,6 +9,11 @@ import (
 	"github.com/Haimbeau1o/zld-supportpilot/internal/platform/config"
 )
 
+type RouteDependencies struct {
+	Auth   *AuthDependencies
+	Ticket *TicketDependencies
+}
+
 type healthzResponse struct {
 	Name      string `json:"name"`
 	Env       string `json:"env"`
@@ -21,10 +26,14 @@ func NewMux(cfg config.Config) *stdhttp.ServeMux {
 }
 
 func NewMuxWithDependencies(cfg config.Config, authDependencies AuthDependencies) *stdhttp.ServeMux {
-	return newMux(cfg, &authDependencies)
+	return newMux(cfg, &RouteDependencies{Auth: &authDependencies})
 }
 
-func newMux(cfg config.Config, authDependencies *AuthDependencies) *stdhttp.ServeMux {
+func NewMuxWithRouteDependencies(cfg config.Config, routeDependencies RouteDependencies) *stdhttp.ServeMux {
+	return newMux(cfg, &routeDependencies)
+}
+
+func newMux(cfg config.Config, routeDependencies *RouteDependencies) *stdhttp.ServeMux {
 	mux := stdhttp.NewServeMux()
 	mux.HandleFunc("/healthz", func(writer stdhttp.ResponseWriter, _ *stdhttp.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -38,9 +47,19 @@ func newMux(cfg config.Config, authDependencies *AuthDependencies) *stdhttp.Serv
 		})
 	})
 
-	if authDependencies != nil {
-		if err := registerAuthRoutes(mux, *authDependencies); err != nil {
-			log.Printf("skip auth route registration: %v", err)
+	if routeDependencies != nil && routeDependencies.Auth != nil {
+		if routeDependencies.Auth.IdentityService != nil && routeDependencies.Auth.TokenManager != nil {
+			if err := registerAuthRoutes(mux, *routeDependencies.Auth); err != nil {
+				log.Printf("skip auth route registration: %v", err)
+			}
+		}
+	}
+
+	if routeDependencies != nil && routeDependencies.Ticket != nil {
+		if routeDependencies.Auth == nil || routeDependencies.Auth.TokenManager == nil {
+			log.Printf("skip ticket route registration: auth token manager is required")
+		} else if err := registerTicketRoutes(mux, *routeDependencies.Auth, *routeDependencies.Ticket); err != nil {
+			log.Printf("skip ticket route registration: %v", err)
 		}
 	}
 
