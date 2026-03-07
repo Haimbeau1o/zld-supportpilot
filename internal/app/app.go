@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/identity"
+	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ticket"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/platform/config"
 	platformhttp "github.com/Haimbeau1o/zld-supportpilot/internal/platform/http"
 )
@@ -17,16 +18,22 @@ type App struct {
 func New() (*App, error) {
 	cfg := config.Load()
 
-	// 当前阶段先使用内存适配，把认证、租户与 RBAC 的边界稳定下来，避免数据库选型过早侵入主线开发。
+	// 当前阶段先使用内存适配，把认证、租户与 RBAC 以及工单主流程的边界稳定下来，避免数据库选型过早侵入主线开发。
 	identityService := identity.NewService(
 		identity.NewMemoryUserRepository(),
 		identity.NewMemoryMembershipRepository(),
 		identity.NewPasswordManager(),
 	)
+	ticketService := ticket.NewService(ticket.NewMemoryTicketRepository())
 	tokenManager := identity.NewTokenManager(cfg.AuthSigningKey, cfg.AuthTokenTTL)
-	mux := platformhttp.NewMuxWithDependencies(cfg, platformhttp.AuthDependencies{
-		IdentityService: identityService,
-		TokenManager:    tokenManager,
+	mux := platformhttp.NewMuxWithRouteDependencies(cfg, platformhttp.RouteDependencies{
+		Auth: &platformhttp.AuthDependencies{
+			IdentityService: identityService,
+			TokenManager:    tokenManager,
+		},
+		Ticket: &platformhttp.TicketDependencies{
+			TicketService: ticketService,
+		},
 	})
 
 	return &App{
