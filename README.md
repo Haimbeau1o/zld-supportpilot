@@ -60,3 +60,13 @@ curl http://localhost:8080/healthz
 - Milestone 4: Knowledge Base + RAG
 - Milestone 5: AI Assistant + Observability
 
+## Delivery Workflow
+
+This repository follows an issue-first, PR-based delivery workflow.
+
+- Roadmap issues are grouped into GitHub milestones
+- Each implementation slice should start from an issue
+- Feature and task branches use the `codex/*` prefix
+- All changes land through PRs, even for documentation-only work
+
+See `CONTRIBUTING.md` and `docs/plans/2026-03-07-delivery-roadmap.md` for the initial collaboration and milestone plan.
