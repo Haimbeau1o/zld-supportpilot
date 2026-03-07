@@ -25,6 +25,7 @@ func TestNewWiresAuthRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected app bootstrap success, got error: %v", err)
 	}
+	defer application.Close()
 
 	request := httptest.NewRequest(
 		stdhttp.MethodPost,
@@ -46,6 +47,7 @@ func TestNewWiresTicketRoutes(t *testing.T) {
 	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
 
 	application, accessToken := bootstrapLoggedInApplication(t)
+	defer application.Close()
 
 	createTicketRequest := httptest.NewRequest(
 		stdhttp.MethodPost,
@@ -67,6 +69,7 @@ func TestNewWiresKnowledgeRoutes(t *testing.T) {
 	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
 
 	application, accessToken := bootstrapLoggedInApplication(t)
+	defer application.Close()
 
 	createKnowledgeBaseRequest := httptest.NewRequest(
 		stdhttp.MethodPost,
@@ -118,6 +121,7 @@ func bootstrapLoggedInApplication(t *testing.T) (*App, string) {
 	if err != nil {
 		t.Fatalf("expected app bootstrap success, got error: %v", err)
 	}
+	t.Cleanup(func() { _ = application.Close() })
 
 	registerRequest := httptest.NewRequest(
 		stdhttp.MethodPost,

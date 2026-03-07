@@ -12,25 +12,44 @@ import (
 )
 
 type App struct {
-	config config.Config
-	server *http.Server
+	config  config.Config
+	server  *http.Server
+	cleanup []func() error
 }
 
 func New() (*App, error) {
 	cfg := config.Load()
 
-	// 当前阶段先使用内存适配，把认证、租户与 RBAC、工单主流程以及知识上传链路的边界稳定下来，避免数据库和真实对象存储过早侵入主线开发。
+	// 当前阶段先使用内存适配，把认证、租户与 RBAC、工单主流程以及知识处理链路的边界稳定下来，避免数据库、对象存储和消息队列过早侵入主线开发。
 	identityService := identity.NewService(
 		identity.NewMemoryUserRepository(),
 		identity.NewMemoryMembershipRepository(),
 		identity.NewPasswordManager(),
 	)
 	ticketService := ticket.NewService(ticket.NewMemoryTicketRepository())
+
+	knowledgeBaseRepository := knowledge.NewMemoryKnowledgeBaseRepository()
+	documentRepository := knowledge.NewMemoryDocumentRepository()
+	taskRepository := knowledge.NewMemoryDocumentProcessingTaskRepository()
+	chunkRepository := knowledge.NewMemoryDocumentChunkRepository()
+	objectStorage := knowledge.NewMemoryObjectStorage()
+	processingQueue := knowledge.NewMemoryProcessingQueue(32)
 	knowledgeService := knowledge.NewService(
-		knowledge.NewMemoryKnowledgeBaseRepository(),
-		knowledge.NewMemoryDocumentRepository(),
-		knowledge.NewMemoryObjectStorage(),
+		knowledgeBaseRepository,
+		documentRepository,
+		objectStorage,
+		knowledge.WithProcessingPipeline(knowledge.ProcessingDependencies{
+			TaskRepository: taskRepository,
+			Dispatcher:     processingQueue,
+			Parser:         knowledge.PlainTextDocumentParser{},
+			Chunker:        knowledge.FixedSizeDocumentChunker{MaxCharacters: 200},
+			Indexer:        knowledge.NewMemoryChunkIndexer(chunkRepository),
+			MaxAttempts:    3,
+		}),
 	)
+	asyncProcessor := knowledge.NewAsyncProcessor(processingQueue, 1, knowledgeService.ProcessTask)
+	asyncProcessor.Start()
+
 	tokenManager := identity.NewTokenManager(cfg.AuthSigningKey, cfg.AuthTokenTTL)
 	mux := platformhttp.NewMuxWithRouteDependencies(cfg, platformhttp.RouteDependencies{
 		Auth: &platformhttp.AuthDependencies{
@@ -51,10 +70,22 @@ func New() (*App, error) {
 			Addr:    cfg.HTTPAddr,
 			Handler: mux,
 		},
+		cleanup: []func() error{asyncProcessor.Close},
 	}, nil
 }
 
 func (a *App) Run() error {
+	defer a.Close()
 	fmt.Printf("%s listening on %s\n", a.config.AppName, a.config.HTTPAddr)
 	return a.server.ListenAndServe()
+}
+
+func (a *App) Close() error {
+	var firstErr error
+	for index := len(a.cleanup) - 1; index >= 0; index-- {
+		if err := a.cleanup[index](); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }

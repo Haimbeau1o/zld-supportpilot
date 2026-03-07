@@ -18,6 +18,8 @@ type knowledgeService interface {
 	UploadDocument(actor identity.IdentityContext, input knowledge.UploadDocumentInput) (knowledge.Document, error)
 	ListDocuments(actor identity.IdentityContext, input knowledge.ListDocumentsInput) ([]knowledge.Document, error)
 	GetDocument(actor identity.IdentityContext, documentID string) (knowledge.Document, error)
+	ListDocumentProcessingTasks(actor identity.IdentityContext, documentID string) ([]knowledge.DocumentProcessingTask, error)
+	RetryDocumentProcessing(actor identity.IdentityContext, documentID string) (knowledge.DocumentProcessingTask, error)
 }
 
 type KnowledgeDependencies struct {
@@ -45,19 +47,37 @@ type knowledgeBaseListResponse struct {
 }
 
 type documentResponse struct {
-	ID              string                   `json:"id"`
-	KnowledgeBaseID string                   `json:"knowledge_base_id"`
-	OrganizationID  string                   `json:"organization_id"`
-	Filename        string                   `json:"filename"`
-	ContentType     string                   `json:"content_type"`
-	SizeBytes       int64                    `json:"size_bytes"`
-	StorageKey      string                   `json:"storage_key"`
-	Status          knowledge.DocumentStatus `json:"status"`
-	UploadedBy      string                   `json:"uploaded_by"`
+	ID                 string                   `json:"id"`
+	KnowledgeBaseID    string                   `json:"knowledge_base_id"`
+	OrganizationID     string                   `json:"organization_id"`
+	Filename           string                   `json:"filename"`
+	ContentType        string                   `json:"content_type"`
+	SizeBytes          int64                    `json:"size_bytes"`
+	StorageKey         string                   `json:"storage_key"`
+	Status             knowledge.DocumentStatus `json:"status"`
+	UploadedBy         string                   `json:"uploaded_by"`
+	LastTaskID         string                   `json:"last_task_id"`
+	ProcessingAttempts int                      `json:"processing_attempts"`
+	ChunkCount         int                      `json:"chunk_count"`
+	LastError          string                   `json:"last_error,omitempty"`
 }
 
 type documentListResponse struct {
 	Items []documentResponse `json:"items"`
+}
+
+type processingTaskResponse struct {
+	ID           string                         `json:"id"`
+	DocumentID   string                         `json:"document_id"`
+	Status       knowledge.ProcessingTaskStatus `json:"status"`
+	Stage        knowledge.ProcessingStage      `json:"stage"`
+	Attempt      int                            `json:"attempt"`
+	MaxAttempts  int                            `json:"max_attempts"`
+	ErrorMessage string                         `json:"error_message,omitempty"`
+}
+
+type processingTaskListResponse struct {
+	Items []processingTaskResponse `json:"items"`
 }
 
 func NewKnowledgeHandler(knowledgeService knowledgeService) KnowledgeHandler {
@@ -188,6 +208,43 @@ func (handler KnowledgeHandler) GetDocument(writer stdhttp.ResponseWriter, reque
 	writeJSON(writer, stdhttp.StatusOK, newDocumentResponse(document))
 }
 
+func (handler KnowledgeHandler) ListDocumentProcessingTasks(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+	actor, ok := identityContextFromContext(request.Context())
+	if !ok {
+		writeError(writer, stdhttp.StatusUnauthorized, "unauthorized", "当前请求缺少身份上下文")
+		return
+	}
+
+	tasks, err := handler.knowledgeService.ListDocumentProcessingTasks(actor, strings.TrimSpace(request.PathValue("id")))
+	if err != nil {
+		handleKnowledgeError(writer, err, "查询文档处理任务失败")
+		return
+	}
+
+	items := make([]processingTaskResponse, 0, len(tasks))
+	for _, item := range tasks {
+		items = append(items, newProcessingTaskResponse(item))
+	}
+
+	writeJSON(writer, stdhttp.StatusOK, processingTaskListResponse{Items: items})
+}
+
+func (handler KnowledgeHandler) RetryDocumentProcessing(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+	actor, ok := identityContextFromContext(request.Context())
+	if !ok {
+		writeError(writer, stdhttp.StatusUnauthorized, "unauthorized", "当前请求缺少身份上下文")
+		return
+	}
+
+	task, err := handler.knowledgeService.RetryDocumentProcessing(actor, strings.TrimSpace(request.PathValue("id")))
+	if err != nil {
+		handleKnowledgeError(writer, err, "重试文档处理失败")
+		return
+	}
+
+	writeJSON(writer, stdhttp.StatusAccepted, newProcessingTaskResponse(task))
+}
+
 func newKnowledgeBaseResponse(knowledgeBase knowledge.KnowledgeBase) knowledgeBaseResponse {
 	return knowledgeBaseResponse{
 		ID:             knowledgeBase.ID,
@@ -199,15 +256,31 @@ func newKnowledgeBaseResponse(knowledgeBase knowledge.KnowledgeBase) knowledgeBa
 
 func newDocumentResponse(document knowledge.Document) documentResponse {
 	return documentResponse{
-		ID:              document.ID,
-		KnowledgeBaseID: document.KnowledgeBaseID,
-		OrganizationID:  document.OrganizationID,
-		Filename:        document.Filename,
-		ContentType:     document.ContentType,
-		SizeBytes:       document.SizeBytes,
-		StorageKey:      document.StorageKey,
-		Status:          document.Status,
-		UploadedBy:      document.UploadedBy,
+		ID:                 document.ID,
+		KnowledgeBaseID:    document.KnowledgeBaseID,
+		OrganizationID:     document.OrganizationID,
+		Filename:           document.Filename,
+		ContentType:        document.ContentType,
+		SizeBytes:          document.SizeBytes,
+		StorageKey:         document.StorageKey,
+		Status:             document.Status,
+		UploadedBy:         document.UploadedBy,
+		LastTaskID:         document.LastTaskID,
+		ProcessingAttempts: document.ProcessingAttempts,
+		ChunkCount:         document.ChunkCount,
+		LastError:          document.LastError,
+	}
+}
+
+func newProcessingTaskResponse(task knowledge.DocumentProcessingTask) processingTaskResponse {
+	return processingTaskResponse{
+		ID:           task.ID,
+		DocumentID:   task.DocumentID,
+		Status:       task.Status,
+		Stage:        task.Stage,
+		Attempt:      task.Attempt,
+		MaxAttempts:  task.MaxAttempts,
+		ErrorMessage: task.ErrorMessage,
 	}
 }
 
@@ -219,8 +292,14 @@ func handleKnowledgeError(writer stdhttp.ResponseWriter, err error, fallbackMess
 		writeError(writer, stdhttp.StatusNotFound, "knowledge_base_not_found", "知识库不存在")
 	case errors.Is(err, knowledge.ErrDocumentNotFound):
 		writeError(writer, stdhttp.StatusNotFound, "document_not_found", "文档不存在")
+	case errors.Is(err, knowledge.ErrDocumentProcessingTaskNotFound):
+		writeError(writer, stdhttp.StatusNotFound, "document_processing_task_not_found", "文档处理任务不存在")
 	case errors.Is(err, knowledge.ErrInvalidKnowledgeInput), errors.Is(err, knowledge.ErrInvalidDocumentInput):
 		writeError(writer, stdhttp.StatusBadRequest, "invalid_knowledge_request", err.Error())
+	case errors.Is(err, knowledge.ErrDocumentRetryNotAllowed):
+		writeError(writer, stdhttp.StatusConflict, "document_retry_not_allowed", err.Error())
+	case errors.Is(err, knowledge.ErrKnowledgeProcessingDisabled):
+		writeError(writer, stdhttp.StatusServiceUnavailable, "knowledge_processing_unavailable", "当前环境未启用文档异步处理")
 	default:
 		writeError(writer, stdhttp.StatusInternalServerError, "internal_error", fallbackMessage)
 	}
@@ -237,11 +316,13 @@ func registerKnowledgeRoutes(mux *stdhttp.ServeMux, authDependencies AuthDepende
 	authMiddleware := NewAuthMiddleware(authDependencies.TokenManager)
 	knowledgeHandler := NewKnowledgeHandler(knowledgeDependencies.KnowledgeService)
 
-	// 知识库与文档上传接口全部挂在鉴权之后，避免后续接入异步处理或检索链路时出现“资源有归属但接口没身份边界”的问题。
+	// 知识库与文档接口全部挂在鉴权之后，避免后续接入异步处理或检索链路时出现“资源有归属但接口没身份边界”的问题。
 	mux.Handle("POST /api/v1/knowledge/bases", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.CreateKnowledgeBase)))
 	mux.Handle("GET /api/v1/knowledge/bases", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.ListKnowledgeBases)))
 	mux.Handle("POST /api/v1/knowledge/bases/{id}/documents", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.UploadDocument)))
 	mux.Handle("GET /api/v1/knowledge/bases/{id}/documents", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.ListDocuments)))
 	mux.Handle("GET /api/v1/knowledge/documents/{id}", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.GetDocument)))
+	mux.Handle("GET /api/v1/knowledge/documents/{id}/tasks", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.ListDocumentProcessingTasks)))
+	mux.Handle("POST /api/v1/knowledge/documents/{id}/retry", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.RetryDocumentProcessing)))
 	return nil
 }

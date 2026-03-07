@@ -45,11 +45,14 @@
 - `POST /api/v1/knowledge/bases/{id}/documents`
 - `GET /api/v1/knowledge/bases/{id}/documents`
 - `GET /api/v1/knowledge/documents/{id}`
+- `GET /api/v1/knowledge/documents/{id}/tasks`
+- `POST /api/v1/knowledge/documents/{id}/retry`
 - 环境变量加载与应用装配骨架
 - 基于 JWT 的最小认证链路
 - 基于租户角色的 RBAC 权限映射
 - 基于显式状态机的工单主流程
 - 基于知识库容器与元数据记录的文档上传链路
+- 基于后台 worker 的异步文档处理流水线（解析 / 切块 / 索引）
 
 ## 学习型研发流程
 
@@ -143,6 +146,22 @@ curl -X POST http://localhost:8080/api/v1/knowledge/bases \
 curl -X POST http://localhost:8080/api/v1/knowledge/bases/<knowledge_base_id>/documents \
   -H 'Authorization: Bearer <access_token>' \
   -F 'file=@./vpn-guide.pdf'
+```
+
+上传成功后，文档会先返回 `uploaded` 状态，后台 worker 会异步推进到 `ready` 或 `failed`。
+
+查询文档处理任务：
+
+```bash
+curl http://localhost:8080/api/v1/knowledge/documents/<document_id>/tasks \
+  -H 'Authorization: Bearer <access_token>'
+```
+
+重试失败文档：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/knowledge/documents/<document_id>/retry \
+  -H 'Authorization: Bearer <access_token>'
 ```
 
 查询知识库列表：
