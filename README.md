@@ -47,12 +47,14 @@
 - `GET /api/v1/knowledge/documents/{id}`
 - `GET /api/v1/knowledge/documents/{id}/tasks`
 - `POST /api/v1/knowledge/documents/{id}/retry`
+- `POST /api/v1/ai/knowledge/bases/{id}/answers`
 - 环境变量加载与应用装配骨架
 - 基于 JWT 的最小认证链路
 - 基于租户角色的 RBAC 权限映射
 - 基于显式状态机的工单主流程
 - 基于知识库容器与元数据记录的文档上传链路
 - 基于后台 worker 的异步文档处理流水线（解析 / 切块 / 索引）
+- 基于内存向量检索与引用返回的 RAG 回答接口
 
 ## 学习型研发流程
 
@@ -163,6 +165,20 @@ curl http://localhost:8080/api/v1/knowledge/documents/<document_id>/tasks \
 curl -X POST http://localhost:8080/api/v1/knowledge/documents/<document_id>/retry \
   -H 'Authorization: Bearer <access_token>'
 ```
+
+知识库问答：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/ai/knowledge/bases/<knowledge_base_id>/answers \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{
+    "question": "VPN 无法连接怎么办？",
+    "top_k": 3
+  }'
+```
+
+当检索置信度不足时，接口会返回 `degraded` 状态，而不是编造答案。
 
 查询知识库列表：
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ai"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/identity"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/knowledge"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ticket"
@@ -39,16 +40,23 @@ func New() (*App, error) {
 		documentRepository,
 		objectStorage,
 		knowledge.WithProcessingPipeline(knowledge.ProcessingDependencies{
-			TaskRepository: taskRepository,
-			Dispatcher:     processingQueue,
-			Parser:         knowledge.PlainTextDocumentParser{},
-			Chunker:        knowledge.FixedSizeDocumentChunker{MaxCharacters: 200},
-			Indexer:        knowledge.NewMemoryChunkIndexer(chunkRepository),
-			MaxAttempts:    3,
+			TaskRepository:  taskRepository,
+			ChunkRepository: chunkRepository,
+			Dispatcher:      processingQueue,
+			Parser:          knowledge.PlainTextDocumentParser{},
+			Chunker:         knowledge.FixedSizeDocumentChunker{MaxCharacters: 200},
+			Indexer:         knowledge.NewMemoryChunkIndexer(chunkRepository),
+			MaxAttempts:     3,
 		}),
 	)
 	asyncProcessor := knowledge.NewAsyncProcessor(processingQueue, 1, knowledgeService.ProcessTask)
 	asyncProcessor.Start()
+	aiService := ai.NewService(ai.ServiceDependencies{
+		ChunkSource:     knowledgeService,
+		Retriever:       ai.NewVectorRetriever(ai.NewHashingEmbedder(128)),
+		AnswerGenerator: ai.TemplateAnswerGenerator{},
+		MinConfidence:   0.15,
+	})
 
 	tokenManager := identity.NewTokenManager(cfg.AuthSigningKey, cfg.AuthTokenTTL)
 	mux := platformhttp.NewMuxWithRouteDependencies(cfg, platformhttp.RouteDependencies{
@@ -61,6 +69,9 @@ func New() (*App, error) {
 		},
 		Knowledge: &platformhttp.KnowledgeDependencies{
 			KnowledgeService: knowledgeService,
+		},
+		AI: &platformhttp.AIDependencies{
+			AIService: aiService,
 		},
 	})
 
