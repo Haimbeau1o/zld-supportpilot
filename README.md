@@ -27,15 +27,17 @@
 - `pkg/llm`：模型抽象层
 - `deployments/docker`：本地依赖环境
 
-## 当前骨架
+## 当前已实现
 
-当前首版骨架已提供：
+当前首版基础能力已提供：
 
 - `GET /healthz`
-- 环境变量加载
-- HTTP 服务器启动骨架
-- Docker Compose 依赖占位
-- GitHub Issue / PR 模板
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `GET /api/v1/auth/me`
+- 环境变量加载与应用装配骨架
+- 基于 JWT 的最小认证链路
+- 基于租户角色的 RBAC 权限映射
 
 ## 学习型研发流程
 
@@ -70,11 +72,50 @@
 
 ```bash
 cp .env.example .env
-make run
+go run ./cmd/api
 ```
 
-访问：
+默认关键环境变量：
+
+- `APP_NAME`：应用名，默认 `zld-supportpilot`
+- `APP_ENV`：运行环境，默认 `dev`
+- `HTTP_ADDR`：监听地址，默认 `:8080`
+- `AUTH_SIGNING_KEY`：JWT 签名密钥，本地默认 `dev-only-signing-key`
+- `AUTH_TOKEN_TTL_SECONDS`：访问令牌有效期秒数，默认 `3600`
+
+访问健康检查：
 
 ```bash
 curl http://localhost:8080/healthz
+```
+
+注册：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "Alice",
+    "email": "alice@example.com",
+    "password": "secret123",
+    "tenant_name": "中联数据智能服务台"
+  }'
+```
+
+登录：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "email": "alice@example.com",
+    "password": "secret123"
+  }'
+```
+
+获取当前身份：
+
+```bash
+curl http://localhost:8080/api/v1/auth/me \
+  -H 'Authorization: Bearer <access_token>'
 ```
