@@ -1,0 +1,25 @@
+name: Task
+description: Track project bootstrap, docs, CI, or operational tasks
+title: "task: "
+labels:
+  - task
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+    validations:
+      required: true
+  - type: textarea
+    id: deliverables
+    attributes:
+      label: Deliverables
+    validations:
+      required: true
+  - type: textarea
+    id: checks
+    attributes:
+      label: Validation
+    validations:
+      required: true
+

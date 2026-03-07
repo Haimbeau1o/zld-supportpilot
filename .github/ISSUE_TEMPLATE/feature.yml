@@ -1,0 +1,28 @@
+name: Feature
+description: Track a functional slice or delivery task
+title: "feat: "
+labels:
+  - feature
+body:
+  - type: textarea
+    id: background
+    attributes:
+      label: Background
+      description: Why is this needed?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What is in scope and out of scope?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      description: What conditions define completion?
+    validations:
+      required: true
+
