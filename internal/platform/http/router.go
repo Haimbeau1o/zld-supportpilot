@@ -10,8 +10,9 @@ import (
 )
 
 type RouteDependencies struct {
-	Auth   *AuthDependencies
-	Ticket *TicketDependencies
+	Auth      *AuthDependencies
+	Ticket    *TicketDependencies
+	Knowledge *KnowledgeDependencies
 }
 
 type healthzResponse struct {
@@ -60,6 +61,14 @@ func newMux(cfg config.Config, routeDependencies *RouteDependencies) *stdhttp.Se
 			log.Printf("skip ticket route registration: auth token manager is required")
 		} else if err := registerTicketRoutes(mux, *routeDependencies.Auth, *routeDependencies.Ticket); err != nil {
 			log.Printf("skip ticket route registration: %v", err)
+		}
+	}
+
+	if routeDependencies != nil && routeDependencies.Knowledge != nil {
+		if routeDependencies.Auth == nil || routeDependencies.Auth.TokenManager == nil {
+			log.Printf("skip knowledge route registration: auth token manager is required")
+		} else if err := registerKnowledgeRoutes(mux, *routeDependencies.Auth, *routeDependencies.Knowledge); err != nil {
+			log.Printf("skip knowledge route registration: %v", err)
 		}
 	}
 
