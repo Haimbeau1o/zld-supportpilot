@@ -9,3 +9,5 @@ bin/
 dist/
 coverage.out
 
+
+.worktrees/
