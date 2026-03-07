@@ -1,0 +1,4 @@
+interface:
+  display_name: "学习型研发工作流"
+  short_description: "用学习优先方式推进项目与分析 Issue 并发性"
+  default_prompt: "用学习型研发工作流推进项目：先做需求分析、调研、方案设计、并发性分析和中文文档沉淀，再进入实现与验证。"

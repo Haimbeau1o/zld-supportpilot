@@ -1,6 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Architecture Notes
-    url: https://github.com/Haimbeau1o/zld-supportpilot/tree/main/docs/architecture
-    about: Review architecture notes before opening new work items.
-
+  - name: 协作与任务编排文档
+    url: https://github.com/Haimbeau1o/zld-supportpilot/tree/main/docs/coordination
+    about: 创建新 Issue 前，先阅读依赖关系、执行波次和融合策略。

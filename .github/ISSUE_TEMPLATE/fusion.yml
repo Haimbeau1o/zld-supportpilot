@@ -1,0 +1,26 @@
+name: 融合
+description: 用于创建并行成果的统一收口与联调类 Issue
+title: "融合："
+labels:
+  - task
+body:
+  - type: textarea
+    id: inputs
+    attributes:
+      label: 输入成果
+      description: 需要融合哪些 Issue 或分支的产出？
+    validations:
+      required: true
+  - type: textarea
+    id: focus
+    attributes:
+      label: 融合重点
+      description: 接口对齐、数据流、权限边界、联调验证、文档汇总等
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 完成标准
+    validations:
+      required: true

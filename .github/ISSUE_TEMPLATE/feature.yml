@@ -1,28 +1,52 @@
-name: Feature
-description: Track a functional slice or delivery task
-title: "feat: "
+name: 功能开发
+description: 用于创建业务功能或模块实现类 Issue
+title: "功能："
 labels:
   - feature
 body:
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Issue 类型
+      options:
+        - 主线
+        - 并行
+        - 融合
+        - 调研
+        - 复盘
+    validations:
+      required: true
   - type: textarea
     id: background
     attributes:
-      label: Background
-      description: Why is this needed?
+      label: 背景与问题
+      description: 这个 Issue 要解决什么问题，为什么现在要做？
     validations:
       required: true
   - type: textarea
     id: scope
     attributes:
-      label: Scope
-      description: What is in scope and out of scope?
+      label: 范围
+      description: 包含什么，不包含什么？
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 前置依赖与并发性
+      description: 依赖哪些 Issue？能否并行？是否需要融合 Issue？
     validations:
       required: true
   - type: textarea
     id: acceptance
     attributes:
-      label: Acceptance Criteria
-      description: What conditions define completion?
+      label: 验收标准
     validations:
       required: true
-
+  - type: textarea
+    id: docs
+    attributes:
+      label: 工作文档
+      description: 对应的 workitem 目录和计划文档路径
+    validations:
+      required: true

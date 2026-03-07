@@ -2,6 +2,7 @@ package http
 
 import (
 	"encoding/json"
+	"log"
 	stdhttp "net/http"
 	"time"
 
@@ -16,6 +17,14 @@ type healthzResponse struct {
 }
 
 func NewMux(cfg config.Config) *stdhttp.ServeMux {
+	return newMux(cfg, nil)
+}
+
+func NewMuxWithDependencies(cfg config.Config, authDependencies AuthDependencies) *stdhttp.ServeMux {
+	return newMux(cfg, &authDependencies)
+}
+
+func newMux(cfg config.Config, authDependencies *AuthDependencies) *stdhttp.ServeMux {
 	mux := stdhttp.NewServeMux()
 	mux.HandleFunc("/healthz", func(writer stdhttp.ResponseWriter, _ *stdhttp.Request) {
 		writer.Header().Set("Content-Type", "application/json")
@@ -28,6 +37,12 @@ func NewMux(cfg config.Config) *stdhttp.ServeMux {
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 		})
 	})
+
+	if authDependencies != nil {
+		if err := registerAuthRoutes(mux, *authDependencies); err != nil {
+			log.Printf("skip auth route registration: %v", err)
+		}
+	}
 
 	return mux
 }

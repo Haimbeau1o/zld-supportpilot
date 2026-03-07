@@ -1,25 +1,44 @@
-name: Task
-description: Track project bootstrap, docs, CI, or operational tasks
-title: "task: "
+name: 任务 / 规范
+description: 用于创建流程、文档、环境、方法层建设类 Issue
+title: "任务："
 labels:
   - task
 body:
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Issue 类型
+      options:
+        - 主线
+        - 并行
+        - 融合
+        - 调研
+        - 复盘
+    validations:
+      required: true
   - type: textarea
     id: objective
     attributes:
-      label: Objective
+      label: 目标
     validations:
       required: true
   - type: textarea
-    id: deliverables
+    id: outputs
     attributes:
-      label: Deliverables
+      label: 输出物
+      description: 本次必须产出哪些文档、脚本、模板或配置？
     validations:
       required: true
   - type: textarea
-    id: checks
+    id: dependencies
     attributes:
-      label: Validation
+      label: 前置依赖与并发性
+      description: 是否能独立推进？需要与哪些 Issue 融合？
     validations:
       required: true
-
+  - type: textarea
+    id: validation
+    attributes:
+      label: 验证方式
+    validations:
+      required: true
