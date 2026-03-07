@@ -41,12 +41,13 @@ type ListDocumentsInput struct {
 }
 
 type ProcessingDependencies struct {
-	TaskRepository DocumentProcessingTaskRepository
-	Dispatcher     ProcessingTaskDispatcher
-	Parser         DocumentParser
-	Chunker        DocumentChunker
-	Indexer        ChunkIndexer
-	MaxAttempts    int
+	TaskRepository  DocumentProcessingTaskRepository
+	ChunkRepository DocumentChunkRepository
+	Dispatcher      ProcessingTaskDispatcher
+	Parser          DocumentParser
+	Chunker         DocumentChunker
+	Indexer         ChunkIndexer
+	MaxAttempts     int
 }
 
 type ServiceOption func(*Service)
@@ -56,6 +57,7 @@ type Service struct {
 	documentRepository      DocumentRepository
 	objectStorage           ObjectStorage
 	taskRepository          DocumentProcessingTaskRepository
+	chunkRepository         DocumentChunkRepository
 	dispatcher              ProcessingTaskDispatcher
 	parser                  DocumentParser
 	chunker                 DocumentChunker
@@ -66,6 +68,7 @@ type Service struct {
 func WithProcessingPipeline(dependencies ProcessingDependencies) ServiceOption {
 	return func(service *Service) {
 		service.taskRepository = dependencies.TaskRepository
+		service.chunkRepository = dependencies.ChunkRepository
 		service.dispatcher = dependencies.Dispatcher
 		service.parser = dependencies.Parser
 		service.chunker = dependencies.Chunker
@@ -202,6 +205,20 @@ func (service *Service) GetDocument(actor identity.IdentityContext, documentID s
 	}
 
 	return document, nil
+}
+
+func (service *Service) ListIndexedChunks(actor identity.IdentityContext, knowledgeBaseID string) ([]DocumentChunk, error) {
+	if service.chunkRepository == nil {
+		return nil, ErrKnowledgeProcessingDisabled
+	}
+
+	knowledgeBase, err := service.getAccessibleKnowledgeBase(actor, knowledgeBaseID)
+	if err != nil {
+		return nil, err
+	}
+
+	// AI 模块只消费已完成处理的 chunk 结果，不直接读取原始文档或处理中间态，避免跨模块职责漂移。
+	return service.chunkRepository.ListByKnowledgeBase(knowledgeBase.ID), nil
 }
 
 func (service *Service) ListDocumentProcessingTasks(actor identity.IdentityContext, documentID string) ([]DocumentProcessingTask, error) {

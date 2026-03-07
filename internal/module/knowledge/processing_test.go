@@ -17,12 +17,13 @@ func TestUploadDocumentCreatesProcessingTask(t *testing.T) {
 		NewMemoryDocumentRepository(),
 		NewMemoryObjectStorage(),
 		WithProcessingPipeline(ProcessingDependencies{
-			TaskRepository: taskRepository,
-			Dispatcher:     dispatcher,
-			Parser:         stubDocumentParser{},
-			Chunker:        stubDocumentChunker{},
-			Indexer:        stubChunkIndexer{repository: chunkRepository},
-			MaxAttempts:    3,
+			TaskRepository:  taskRepository,
+			ChunkRepository: chunkRepository,
+			Dispatcher:      dispatcher,
+			Parser:          stubDocumentParser{},
+			Chunker:         stubDocumentChunker{},
+			Indexer:         stubChunkIndexer{repository: chunkRepository},
+			MaxAttempts:     3,
 		}),
 	)
 
@@ -150,12 +151,13 @@ func TestProcessTaskFailureAllowsRetry(t *testing.T) {
 		NewMemoryDocumentRepository(),
 		NewMemoryObjectStorage(),
 		WithProcessingPipeline(ProcessingDependencies{
-			TaskRepository: taskRepository,
-			Dispatcher:     dispatcher,
-			Parser:         parser,
-			Chunker:        stubDocumentChunker{},
-			Indexer:        stubChunkIndexer{repository: chunkRepository},
-			MaxAttempts:    3,
+			TaskRepository:  taskRepository,
+			ChunkRepository: chunkRepository,
+			Dispatcher:      dispatcher,
+			Parser:          parser,
+			Chunker:         stubDocumentChunker{},
+			Indexer:         stubChunkIndexer{repository: chunkRepository},
+			MaxAttempts:     3,
 		}),
 	)
 
