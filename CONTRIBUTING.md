@@ -1,44 +1,95 @@
-# Contributing Guide
+# 贡献与协作规范
 
-## Collaboration Model
+## 目标
 
-`ZLD SupportPilot` is maintained as a production-style portfolio project. The repository uses lightweight team conventions so work can be demonstrated in a realistic GitHub flow.
+本仓库采用“学习型研发”方式推进，要求每个需求既交付工程结果，也沉淀学习结果与研究过程。
 
-## Workflow
+## Issue 类型
 
-1. Start from an open GitHub issue.
-2. Create a branch with the `codex/*` prefix.
-3. Keep each PR focused on one issue or one tightly related slice.
-4. Run local validation before opening or updating a PR.
-5. Merge only after the PR description clearly explains scope, risk, and validation.
+建议按以下类型创建 Issue：
 
-## Branch Naming
+- `主线`：阶段性主目标
+- `并行`：可独立推进的子任务
+- `融合`：并行成果收口、联调和统一整理
+- `调研`：方案对比、技术选型、外部资料梳理
+- `复盘`：阶段总结、风险回顾、知识沉淀
 
-- `codex/bootstrap-repo`
+## 每个 Issue 的固定交付物
+
+每个 Issue 对应一个独立目录：`docs/workitems/issue-xxx-主题/`
+
+目录内固定放置以下 7 份文档：
+
+1. `00-任务卡.md`
+2. `01-调研记录.md`
+3. `02-方案设计.md`
+4. `03-实施计划.md`
+5. `04-验证记录.md`
+6. `05-工作日志.md`
+7. `06-复盘总结.md`
+
+## 执行流程
+
+1. 先写清问题、目标、范围、验收标准
+2. 先做调研和方案对比，再决定实现方式
+3. 先分析 Issue 依赖，再决定串行或并行推进
+4. 先更新文档计划，再实现代码
+5. 实现过程中在关键逻辑补充中文注释
+6. 完成后记录验证过程、工作日志和复盘结论
+7. 并行任务完成后，通过“融合 Issue”统一收口
+
+## 并发性分析规则
+
+每次开始一个 Issue 前，必须明确：
+
+- 前置依赖是什么
+- 是否可以独立并行
+- 会与哪些模块在接口、数据模型、权限边界上产生耦合
+- 是否需要预先创建融合 Issue
+
+具体分析方式见：`docs/coordination/当前Issue依赖与并发分析.md`
+
+## 分支规范
+
+- 所有分支统一使用 `codex/*`
+- 一个分支只解决一个 Issue 或一组紧密相关的子任务
+- 融合类工作建议单独分支，避免和实现分支混杂
+
+示例：
+
+- `codex/m0-workflow-foundation`
 - `codex/auth-rbac-foundation`
 - `codex/ticket-workflow`
-- `codex/rag-answer-api`
+- `codex/fusion-ticket-knowledge`
 
-## Pull Requests
+## PR 规范
 
-- Link the issue in the PR body with `Closes #<number>`
-- Describe `What`, `Why`, `How`, `Risk`, and `Validation`
-- Keep PRs small enough to review in one sitting
+- `PR` 全部使用中文标题和中文描述
+- PR 正文必须包含：背景、改动内容、实现方式、验证结果、风险影响、关联文档、关闭 Issue
+- 文档类改动也必须走 PR，不允许直接在 `main` 分支提交
 
-## Milestones
+## 中文注释规范
 
-- `M1 - Foundation`: bootstrap, environment, auth foundation
-- `M2 - Ticket & Knowledge`: ticket workflow, document ingestion, retrieval preparation
-- `M3 - AI & Ops`: RAG, AI assistance, observability, release polish
+在以下场景必须补充中文注释：
 
-## Verification
+- 关键业务规则
+- 容易误解的边界条件
+- 设计上为什么这么实现
+- 并发控制、超时、重试、幂等等复杂逻辑
 
-For Go code changes, run:
+不要把中文注释写成逐行翻译；注释要解释“为什么”和“这里要注意什么”。
+
+## 验证规范
+
+代码类改动至少完成以下验证：
 
 ```bash
 gofmt -w ./cmd ./internal ./pkg
 go test ./...
 ```
 
-For documentation-only changes, verify links and referenced issue numbers are still correct.
+如果是文档/流程类改动，需要检查：
 
+- 文档链接是否有效
+- Issue / PR / 路线图编号是否一致
+- 并发性分析和融合策略是否同步更新

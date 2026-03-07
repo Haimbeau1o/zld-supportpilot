@@ -1,0 +1,26 @@
+name: 调研
+description: 用于创建技术调研、方案比较、选型分析类 Issue
+title: "调研："
+labels:
+  - documentation
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 调研问题
+    validations:
+      required: true
+  - type: textarea
+    id: candidates
+    attributes:
+      label: 候选方案
+      description: 计划比较哪些方案或资料来源？
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: 预期输出
+      description: 调研最终要形成哪些结论、文档或决策？
+    validations:
+      required: true

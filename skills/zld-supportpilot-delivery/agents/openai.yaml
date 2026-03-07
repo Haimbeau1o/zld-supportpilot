@@ -1,0 +1,4 @@
+interface:
+  display_name: "ZLD 交付流程"
+  short_description: "在 ZLD SupportPilot 仓库内按项目上下文推进任务"
+  default_prompt: "基于 ZLD SupportPilot 的模块边界、路线图和中文工作规范推进任务，先判断依赖与波次，再输出文档、计划和实现。"

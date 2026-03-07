@@ -1,25 +1,29 @@
-## Summary
+## 背景
 
-- 
+-
 
-## Why
+## 改动内容
 
-- 
+-
 
-## How
+## 实现方式
 
-- 
+-
 
-## Risk
+## 验证结果
 
-- 
+- [ ] 已执行 `go test ./...`
+- [ ] 已完成必要的手工验证
+- [ ] 已更新对应工作文档
 
-## Validation
+## 风险影响
 
-- [ ] `go test ./...`
-- [ ] Manual smoke check completed
+-
 
-## Linked Issue
+## 关联文档
+
+-
+
+## 关闭 Issue
 
 Closes #
-

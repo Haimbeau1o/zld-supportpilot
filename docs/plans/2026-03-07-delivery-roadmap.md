@@ -1,35 +1,42 @@
-# ZLD SupportPilot Delivery Roadmap
+# ZLD SupportPilot 交付路线图
 
-## Positioning
+## 定位
 
-This roadmap captures the first delivery slices for `ZLD SupportPilot`, a Go-based intelligent service desk backend for enterprise support scenarios.
+本路线图用于描述 `ZLD SupportPilot` 当前阶段的任务编排、阶段目标与依赖关系。仓库采用“学习型研发”方式推进，要求每个阶段同时交付代码与知识沉淀。
 
-## Milestones
+## 阶段划分
 
-### M1 - Foundation
+### M0 - 方法与协作基础
 
-- `#1` Define delivery workflow and roadmap
-- `#2` Build tenant, auth and RBAC foundation
+- 建立学习型研发工作流
+- 建立项目专属交付 skill
+- 落地模板、依赖分析、执行波次、融合策略
+- 统一 GitHub 的中文 Issue / PR 流程
 
-### M2 - Ticket & Knowledge
+### M1 - 基础能力
 
-- `#3` Implement ticket domain and workflow
-- `#4` Add ticket collaboration and audit events
-- `#5` Add knowledge base and document upload flow
-- `#6` Build async document processing pipeline
+- 认证、租户、RBAC 基础
 
-### M3 - AI & Ops
+### M2 - 工单与知识库
 
-- `#7` Implement retrieval and RAG answer API
-- `#8` Add AI classification, summary and draft reply flows
-- `#9` Add observability, rate limiting and release polish
+- 工单主流程
+- 工单协作与审计事件
+- 知识库与文档上传
+- 异步文档处理流水线
 
-## Working Agreement
+### M3 - AI 与工程化
 
-- Each roadmap slice should have a dedicated PR
-- Documentation and architecture updates land alongside implementation when relevant
-- New features should preserve the module boundaries defined in `docs/architecture/overview.md`
+- RAG 检索与回答接口
+- AI 分类、摘要、回复草稿
+- 可观测性、限流、发布整理
 
-## Near-Term Goal
+## 研发约束
 
-The immediate next delivery objective is to complete the foundation story: repository workflow, local environment expectations, and tenant-aware auth groundwork.
+- 所有 Issue 和 PR 使用中文
+- 每个 Issue 固定沉淀 7 份工作文档
+- 先做依赖分析，再做实现拆分
+- 并行工作完成后必须通过融合 Issue 收口
+
+## 下一步
+
+当前优先级最高的工作不是业务功能，而是完成 `M0 - 方法与协作基础`，为后续所有功能开发建立统一规范。
