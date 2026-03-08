@@ -218,7 +218,7 @@ func maxInt64(left, right int64) int64 {
 	return right
 }
 
-func registerAuthRoutes(mux *stdhttp.ServeMux, authDependencies AuthDependencies) error {
+func registerAuthRoutes(mux *stdhttp.ServeMux, runtime routeRuntime, authDependencies AuthDependencies) error {
 	if authDependencies.IdentityService == nil {
 		return fmt.Errorf("identity service is required")
 	}
@@ -229,8 +229,9 @@ func registerAuthRoutes(mux *stdhttp.ServeMux, authDependencies AuthDependencies
 	authHandler := NewAuthHandler(authDependencies.IdentityService, authDependencies.TokenManager)
 	authMiddleware := NewAuthMiddleware(authDependencies.TokenManager)
 
-	mux.HandleFunc("/api/v1/auth/register", authHandler.Register)
-	mux.HandleFunc("/api/v1/auth/login", authHandler.Login)
-	mux.Handle("/api/v1/auth/me", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(authHandler.Me)))
+	mux.Handle("POST /api/v1/auth/register", runtime.public("POST /api/v1/auth/register", stdhttp.HandlerFunc(authHandler.Register)))
+	// 登录接口属于高风险公共入口，当前阶段先按客户端地址做进程内限流，用于体现基础暴力尝试保护边界。
+	mux.Handle("POST /api/v1/auth/login", runtime.publicRateLimited("POST /api/v1/auth/login", clientAddressRateLimitKey, stdhttp.HandlerFunc(authHandler.Login)))
+	mux.Handle("GET /api/v1/auth/me", runtime.protected("GET /api/v1/auth/me", authMiddleware, stdhttp.HandlerFunc(authHandler.Me)))
 	return nil
 }

@@ -147,6 +147,26 @@ func TestAuthMe(t *testing.T) {
 func newTestAuthMux(t *testing.T) *stdhttp.ServeMux {
 	t.Helper()
 
+	return newTestAuthMuxWithConfig(t, config.Config{
+		AppName:  "zld-supportpilot-test",
+		AppEnv:   "test",
+		HTTPAddr: ":0",
+	})
+}
+
+func newTestAuthMuxWithConfig(t *testing.T, cfg config.Config) *stdhttp.ServeMux {
+	t.Helper()
+
+	if cfg.AppName == "" {
+		cfg.AppName = "zld-supportpilot-test"
+	}
+	if cfg.AppEnv == "" {
+		cfg.AppEnv = "test"
+	}
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = ":0"
+	}
+
 	identityService := identity.NewService(
 		identity.NewMemoryUserRepository(),
 		identity.NewMemoryMembershipRepository(),
@@ -154,11 +174,7 @@ func newTestAuthMux(t *testing.T) *stdhttp.ServeMux {
 	)
 	tokenManager := identity.NewTokenManager("test-signing-key", time.Hour)
 
-	return NewMuxWithDependencies(config.Config{
-		AppName:  "zld-supportpilot-test",
-		AppEnv:   "test",
-		HTTPAddr: ":0",
-	}, AuthDependencies{
+	return NewMuxWithDependencies(cfg, AuthDependencies{
 		IdentityService: identityService,
 		TokenManager:    tokenManager,
 	})

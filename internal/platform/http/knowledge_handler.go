@@ -305,7 +305,7 @@ func handleKnowledgeError(writer stdhttp.ResponseWriter, err error, fallbackMess
 	}
 }
 
-func registerKnowledgeRoutes(mux *stdhttp.ServeMux, authDependencies AuthDependencies, knowledgeDependencies KnowledgeDependencies) error {
+func registerKnowledgeRoutes(mux *stdhttp.ServeMux, runtime routeRuntime, authDependencies AuthDependencies, knowledgeDependencies KnowledgeDependencies) error {
 	if authDependencies.TokenManager == nil {
 		return fmt.Errorf("token manager is required for knowledge routes")
 	}
@@ -317,12 +317,13 @@ func registerKnowledgeRoutes(mux *stdhttp.ServeMux, authDependencies AuthDepende
 	knowledgeHandler := NewKnowledgeHandler(knowledgeDependencies.KnowledgeService)
 
 	// 知识库与文档接口全部挂在鉴权之后，避免后续接入异步处理或检索链路时出现“资源有归属但接口没身份边界”的问题。
-	mux.Handle("POST /api/v1/knowledge/bases", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.CreateKnowledgeBase)))
-	mux.Handle("GET /api/v1/knowledge/bases", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.ListKnowledgeBases)))
-	mux.Handle("POST /api/v1/knowledge/bases/{id}/documents", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.UploadDocument)))
-	mux.Handle("GET /api/v1/knowledge/bases/{id}/documents", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.ListDocuments)))
-	mux.Handle("GET /api/v1/knowledge/documents/{id}", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.GetDocument)))
-	mux.Handle("GET /api/v1/knowledge/documents/{id}/tasks", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.ListDocumentProcessingTasks)))
-	mux.Handle("POST /api/v1/knowledge/documents/{id}/retry", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(knowledgeHandler.RetryDocumentProcessing)))
+	mux.Handle("POST /api/v1/knowledge/bases", runtime.protected("POST /api/v1/knowledge/bases", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.CreateKnowledgeBase)))
+	mux.Handle("GET /api/v1/knowledge/bases", runtime.protected("GET /api/v1/knowledge/bases", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.ListKnowledgeBases)))
+	// 文档上传与重试会消耗解析、切块和索引资源，因此被定义为当前阶段的高成本限流边界。
+	mux.Handle("POST /api/v1/knowledge/bases/{id}/documents", runtime.protectedRateLimited("POST /api/v1/knowledge/bases/{id}/documents", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(knowledgeHandler.UploadDocument)))
+	mux.Handle("GET /api/v1/knowledge/bases/{id}/documents", runtime.protected("GET /api/v1/knowledge/bases/{id}/documents", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.ListDocuments)))
+	mux.Handle("GET /api/v1/knowledge/documents/{id}", runtime.protected("GET /api/v1/knowledge/documents/{id}", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.GetDocument)))
+	mux.Handle("GET /api/v1/knowledge/documents/{id}/tasks", runtime.protected("GET /api/v1/knowledge/documents/{id}/tasks", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.ListDocumentProcessingTasks)))
+	mux.Handle("POST /api/v1/knowledge/documents/{id}/retry", runtime.protectedRateLimited("POST /api/v1/knowledge/documents/{id}/retry", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(knowledgeHandler.RetryDocumentProcessing)))
 	return nil
 }

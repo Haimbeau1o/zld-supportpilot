@@ -173,7 +173,7 @@ func handleAIError(writer stdhttp.ResponseWriter, err error) {
 	}
 }
 
-func registerAIRoutes(mux *stdhttp.ServeMux, authDependencies AuthDependencies, aiDependencies AIDependencies) error {
+func registerAIRoutes(mux *stdhttp.ServeMux, runtime routeRuntime, authDependencies AuthDependencies, aiDependencies AIDependencies) error {
 	if authDependencies.TokenManager == nil {
 		return fmt.Errorf("token manager is required for ai routes")
 	}
@@ -185,7 +185,8 @@ func registerAIRoutes(mux *stdhttp.ServeMux, authDependencies AuthDependencies, 
 	aiHandler := NewAIHandler(aiDependencies.AIService)
 
 	// AI 接口统一运行在鉴权之后，保证知识库与工单的租户归属边界不被绕开。
-	mux.Handle("POST /api/v1/ai/knowledge/bases/{id}/answers", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(aiHandler.AskKnowledgeQuestion)))
-	mux.Handle("POST /api/v1/ai/tickets/{id}/assist", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(aiHandler.GenerateTicketAssist)))
+	// AI 问答与工单辅助都属于高成本能力，因此当前阶段统一纳入限流边界，避免演示环境被连续请求打爆。
+	mux.Handle("POST /api/v1/ai/knowledge/bases/{id}/answers", runtime.protectedRateLimited("POST /api/v1/ai/knowledge/bases/{id}/answers", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(aiHandler.AskKnowledgeQuestion)))
+	mux.Handle("POST /api/v1/ai/tickets/{id}/assist", runtime.protectedRateLimited("POST /api/v1/ai/tickets/{id}/assist", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(aiHandler.GenerateTicketAssist)))
 	return nil
 }
