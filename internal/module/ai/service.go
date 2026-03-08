@@ -260,12 +260,18 @@ func buildTicketAssistQuestion(currentTicket ticket.Ticket, timeline []ticket.Ti
 		builder.WriteString("。")
 		builder.WriteString(description)
 	}
-	for _, item := range timeline {
-		if item.ItemType != ticket.TicketTimelineItemTypeComment || strings.TrimSpace(item.Content) == "" {
+	for index := len(timeline) - 1; index >= 0; index-- {
+		item := timeline[index]
+		content := strings.TrimSpace(item.Content)
+		if item.ItemType != ticket.TicketTimelineItemTypeComment || content == "" {
+			continue
+		}
+		// 生成新一轮建议时要跳过 AI 自己的执行记录，避免把旧的 AI 输出再次喂回检索链路造成递归污染。
+		if item.CommentType == ticket.TicketCommentTypeInternalNote && strings.HasPrefix(content, "【AI 执行记录】") {
 			continue
 		}
 		builder.WriteString("。补充信息：")
-		builder.WriteString(strings.TrimSpace(item.Content))
+		builder.WriteString(content)
 		break
 	}
 	return builder.String()
