@@ -156,12 +156,70 @@ func TestGenerateTicketAssistDegradedReplyDraft(t *testing.T) {
 	}
 }
 
-type stubKnowledgeAnswerer struct {
-	result AnswerResult
-	err    error
+func TestGenerateTicketAssistUsesLatestNonAIContext(t *testing.T) {
+	agent := identity.IdentityContext{
+		UserID:         "agent-1",
+		OrganizationID: "org-1",
+		Role:           identity.RoleAgent,
+		Permissions:    identity.RolePermissions(identity.RoleAgent),
+	}
+	capturedInput := &AskKnowledgeQuestionInput{}
+	service := NewService(ServiceDependencies{
+		TicketWorkspace: stubTicketWorkspace{
+			ticket: ticket.Ticket{
+				ID:             "ticket-1",
+				OrganizationID: "org-1",
+				RequesterID:    "user-1",
+				Title:          "VPN 无法连接",
+				Description:    "今天上午开始无法连接公司 VPN。",
+				Category:       "network",
+				Priority:       ticket.TicketPriorityHigh,
+				Status:         ticket.TicketStatusOpen,
+				CreatedAt:      time.Now().Add(-30 * time.Minute),
+				UpdatedAt:      time.Now().Add(-5 * time.Minute),
+			},
+			timeline: []ticket.TicketTimelineItem{
+				{ID: "comment-1", TicketID: "ticket-1", ActorID: "user-1", ItemType: ticket.TicketTimelineItemTypeComment, CommentType: ticket.TicketCommentTypeComment, Content: "第一次补充：客户端已重装。", CreatedAt: time.Now().Add(-4 * time.Minute)},
+				{ID: "comment-ai-0", TicketID: "ticket-1", ActorID: "agent-1", ItemType: ticket.TicketTimelineItemTypeComment, CommentType: ticket.TicketCommentTypeInternalNote, Content: "【AI 执行记录】\n上次建议：请检查网络。", CreatedAt: time.Now().Add(-3 * time.Minute)},
+				{ID: "comment-2", TicketID: "ticket-1", ActorID: "user-1", ItemType: ticket.TicketTimelineItemTypeComment, CommentType: ticket.TicketCommentTypeComment, Content: "最新补充：错误码 691。", CreatedAt: time.Now().Add(-2 * time.Minute)},
+			},
+			recordedComment: ticket.TicketComment{ID: "comment-ai-1", TicketID: "ticket-1", AuthorID: "agent-1", Type: ticket.TicketCommentTypeInternalNote, Content: "【AI 执行记录】", CreatedAt: time.Now()},
+		},
+		TicketAnalyzer: TemplateTicketAnalyzer{},
+		KnowledgeAnswerer: stubKnowledgeAnswerer{
+			capturedInput: capturedInput,
+			result:        AnswerResult{Status: AnswerStatusAnswered, Answer: "建议先重置 VPN 客户端配置。", Confidence: 0.8},
+		},
+	})
+
+	_, err := service.GenerateTicketAssist(context.Background(), agent, GenerateTicketAssistInput{
+		TicketID:        "ticket-1",
+		KnowledgeBaseID: "kb-1",
+	})
+	if err != nil {
+		t.Fatalf("generate ticket assist: %v", err)
+	}
+	if !strings.Contains(capturedInput.Question, "最新补充：错误码 691") {
+		t.Fatalf("expected latest public comment in question context, got %q", capturedInput.Question)
+	}
+	if strings.Contains(capturedInput.Question, "第一次补充：客户端已重装") {
+		t.Fatalf("expected old comment to be skipped, got %q", capturedInput.Question)
+	}
+	if strings.Contains(capturedInput.Question, "【AI 执行记录】") {
+		t.Fatalf("expected AI execution note to be skipped, got %q", capturedInput.Question)
+	}
 }
 
-func (answerer stubKnowledgeAnswerer) AskKnowledgeQuestion(context.Context, identity.IdentityContext, AskKnowledgeQuestionInput) (AnswerResult, error) {
+type stubKnowledgeAnswerer struct {
+	result        AnswerResult
+	err           error
+	capturedInput *AskKnowledgeQuestionInput
+}
+
+func (answerer stubKnowledgeAnswerer) AskKnowledgeQuestion(_ context.Context, _ identity.IdentityContext, input AskKnowledgeQuestionInput) (AnswerResult, error) {
+	if answerer.capturedInput != nil {
+		*answerer.capturedInput = input
+	}
 	if answerer.err != nil {
 		return AnswerResult{}, answerer.err
 	}
