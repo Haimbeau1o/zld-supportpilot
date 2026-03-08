@@ -97,13 +97,24 @@ func TestNewWiresRAGAnswerRoute(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	askRequest := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/knowledge/bases/"+knowledgeBaseResponse.ID+"/answers", bytes.NewBufferString(`{"question":"VPN 无法连接怎么办？","top_k":2}`))
-	askRequest.Header.Set("Content-Type", "application/json")
-	askRequest.Header.Set("Authorization", "Bearer "+accessToken)
-	askRecorder := httptest.NewRecorder()
-	application.server.Handler.ServeHTTP(askRecorder, askRequest)
-	if askRecorder.Code != stdhttp.StatusOK {
-		t.Fatalf("expected answer status %d, got %d, body=%s", stdhttp.StatusOK, askRecorder.Code, askRecorder.Body.String())
+	var askRecorder *httptest.ResponseRecorder
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		askRequest := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/knowledge/bases/"+knowledgeBaseResponse.ID+"/answers", bytes.NewBufferString(`{"question":"VPN 无法连接怎么办？","top_k":2}`))
+		askRequest.Header.Set("Content-Type", "application/json")
+		askRequest.Header.Set("Authorization", "Bearer "+accessToken)
+		askRecorder = httptest.NewRecorder()
+		application.server.Handler.ServeHTTP(askRecorder, askRequest)
+		if askRecorder.Code == stdhttp.StatusOK {
+			break
+		}
+		if askRecorder.Code != stdhttp.StatusServiceUnavailable {
+			t.Fatalf("expected answer status %d or %d during warmup, got %d, body=%s", stdhttp.StatusOK, stdhttp.StatusServiceUnavailable, askRecorder.Code, askRecorder.Body.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if askRecorder == nil || askRecorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected answer route to become ready, last code=%d body=%s", askRecorder.Code, askRecorder.Body.String())
 	}
 
 	var answerResponse appRAGResponse
