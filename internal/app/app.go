@@ -26,7 +26,13 @@ func New() (*App, error) {
 		identity.NewMemoryMembershipRepository(),
 		identity.NewPasswordManager(),
 	)
-	ticketService := ticket.NewService(ticket.NewMemoryTicketRepository())
+	ticketService := ticket.NewService(
+		ticket.NewMemoryTicketRepository(),
+		ticket.WithCollaborationDependencies(ticket.CollaborationDependencies{
+			CommentRepository: ticket.NewMemoryTicketCommentRepository(),
+			AuditRepository:   ticket.NewMemoryTicketAuditEventRepository(),
+		}),
+	)
 
 	knowledgeBaseRepository := knowledge.NewMemoryKnowledgeBaseRepository()
 	documentRepository := knowledge.NewMemoryDocumentRepository()

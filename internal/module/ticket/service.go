@@ -3,6 +3,7 @@ package ticket
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,10 +11,11 @@ import (
 )
 
 var (
-	ErrTicketNotFound          = errors.New("ticket not found")
-	ErrTicketForbidden         = errors.New("ticket forbidden")
-	ErrInvalidTicketInput      = errors.New("invalid ticket input")
-	ErrInvalidStatusTransition = errors.New("invalid ticket status transition")
+	ErrTicketNotFound               = errors.New("ticket not found")
+	ErrTicketForbidden              = errors.New("ticket forbidden")
+	ErrInvalidTicketInput           = errors.New("invalid ticket input")
+	ErrInvalidStatusTransition      = errors.New("invalid ticket status transition")
+	ErrTicketCollaborationDisabled  = errors.New("ticket collaboration disabled")
 )
 
 type CreateTicketInput struct {
@@ -35,12 +37,38 @@ type TransitionTicketStatusInput struct {
 	ToStatus TicketStatus
 }
 
-type Service struct {
-	ticketRepository TicketRepository
+type AddTicketCommentInput struct {
+	TicketID string
+	Type     TicketCommentType
+	Content  string
 }
 
-func NewService(ticketRepository TicketRepository) *Service {
-	return &Service{ticketRepository: ticketRepository}
+type CollaborationDependencies struct {
+	CommentRepository TicketCommentRepository
+	AuditRepository   TicketAuditEventRepository
+}
+
+type ServiceOption func(*Service)
+
+type Service struct {
+	ticketRepository  TicketRepository
+	commentRepository TicketCommentRepository
+	auditRepository   TicketAuditEventRepository
+}
+
+func WithCollaborationDependencies(dependencies CollaborationDependencies) ServiceOption {
+	return func(service *Service) {
+		service.commentRepository = dependencies.CommentRepository
+		service.auditRepository = dependencies.AuditRepository
+	}
+}
+
+func NewService(ticketRepository TicketRepository, options ...ServiceOption) *Service {
+	service := &Service{ticketRepository: ticketRepository}
+	for _, option := range options {
+		option(service)
+	}
+	return service
 }
 
 func (service *Service) CreateTicket(actor identity.IdentityContext, input CreateTicketInput) (Ticket, error) {
@@ -71,6 +99,7 @@ func (service *Service) CreateTicket(actor identity.IdentityContext, input Creat
 		UpdatedAt:      now,
 	})
 
+	service.recordAuditEvent(ticket, actor.UserID, TicketAuditEventTypeCreated, "工单已创建", "", "")
 	return ticket, nil
 }
 
@@ -100,6 +129,100 @@ func (service *Service) ListTickets(actor identity.IdentityContext, _ ListTicket
 	return accessibleTickets, nil
 }
 
+func (service *Service) AddTicketComment(actor identity.IdentityContext, input AddTicketCommentInput) (TicketComment, error) {
+	if service.commentRepository == nil {
+		return TicketComment{}, ErrTicketCollaborationDisabled
+	}
+
+	ticket, err := service.GetTicket(actor, strings.TrimSpace(input.TicketID))
+	if err != nil {
+		return TicketComment{}, err
+	}
+
+	content := strings.TrimSpace(input.Content)
+	if content == "" {
+		return TicketComment{}, fmt.Errorf("%w: comment content is required", ErrInvalidTicketInput)
+	}
+
+	commentType := input.Type
+	if commentType == "" {
+		commentType = TicketCommentTypeComment
+	}
+	if commentType != TicketCommentTypeComment && commentType != TicketCommentTypeInternalNote {
+		return TicketComment{}, fmt.Errorf("%w: unsupported comment type", ErrInvalidTicketInput)
+	}
+	if commentType == TicketCommentTypeInternalNote && !canManageTicket(actor, ticket) {
+		// 内部备注只允许拥有工单写权限的处理方写入，避免终端用户把“内部协作区”当成公开对话区。
+		return TicketComment{}, ErrTicketForbidden
+	}
+
+	now := time.Now()
+	comment := service.commentRepository.Save(TicketComment{
+		TicketID:       ticket.ID,
+		OrganizationID: ticket.OrganizationID,
+		AuthorID:       actor.UserID,
+		Type:           commentType,
+		Content:        content,
+		CreatedAt:      now,
+	})
+
+	return comment, nil
+}
+
+func (service *Service) ListTicketTimeline(actor identity.IdentityContext, ticketID string) ([]TicketTimelineItem, error) {
+	if service.commentRepository == nil || service.auditRepository == nil {
+		return nil, ErrTicketCollaborationDisabled
+	}
+
+	ticket, err := service.GetTicket(actor, ticketID)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]TicketTimelineItem, 0)
+	for _, event := range service.auditRepository.ListByTicket(ticket.ID) {
+		items = append(items, TicketTimelineItem{
+			ID:             event.ID,
+			TicketID:       event.TicketID,
+			OrganizationID: event.OrganizationID,
+			ActorID:        event.ActorID,
+			ItemType:       TicketTimelineItemTypeAuditEvent,
+			AuditEventType: event.Type,
+			Content:        event.Content,
+			FromValue:      event.FromValue,
+			ToValue:        event.ToValue,
+			CreatedAt:      event.CreatedAt,
+		})
+	}
+	for _, comment := range service.commentRepository.ListByTicket(ticket.ID) {
+		if comment.Type == TicketCommentTypeInternalNote && !canManageTicket(actor, ticket) {
+			continue
+		}
+		items = append(items, TicketTimelineItem{
+			ID:             comment.ID,
+			TicketID:       comment.TicketID,
+			OrganizationID: comment.OrganizationID,
+			ActorID:        comment.AuthorID,
+			ItemType:       TicketTimelineItemTypeComment,
+			CommentType:    comment.Type,
+			Content:        comment.Content,
+			CreatedAt:      comment.CreatedAt,
+		})
+	}
+
+	sort.Slice(items, func(left, right int) bool {
+		if items[left].CreatedAt.Equal(items[right].CreatedAt) {
+			if items[left].ItemType == items[right].ItemType {
+				return items[left].ID < items[right].ID
+			}
+			return items[left].ItemType < items[right].ItemType
+		}
+		return items[left].CreatedAt.Before(items[right].CreatedAt)
+	})
+
+	return items, nil
+}
+
 func (service *Service) AssignTicket(actor identity.IdentityContext, input AssignTicketInput) (Ticket, error) {
 	if strings.TrimSpace(input.AssigneeID) == "" {
 		return Ticket{}, fmt.Errorf("%w: assignee id is required", ErrInvalidTicketInput)
@@ -114,9 +237,11 @@ func (service *Service) AssignTicket(actor identity.IdentityContext, input Assig
 		return Ticket{}, ErrTicketForbidden
 	}
 
+	fromAssigneeID := ticket.AssigneeID
 	ticket.AssigneeID = strings.TrimSpace(input.AssigneeID)
 	ticket.UpdatedAt = time.Now()
 	ticket = service.ticketRepository.Save(ticket)
+	service.recordAuditEvent(ticket, actor.UserID, TicketAuditEventTypeAssignmentChanged, "工单指派已更新", fromAssigneeID, ticket.AssigneeID)
 	return ticket, nil
 }
 
@@ -134,10 +259,30 @@ func (service *Service) TransitionTicketStatus(actor identity.IdentityContext, i
 		return Ticket{}, fmt.Errorf("%w: %v", ErrInvalidStatusTransition, err)
 	}
 
+	fromStatus := ticket.Status
 	ticket.Status = input.ToStatus
 	ticket.UpdatedAt = time.Now()
 	ticket = service.ticketRepository.Save(ticket)
+	service.recordAuditEvent(ticket, actor.UserID, TicketAuditEventTypeStatusChanged, "工单状态已更新", string(fromStatus), string(ticket.Status))
 	return ticket, nil
+}
+
+func (service *Service) recordAuditEvent(ticket Ticket, actorID string, eventType TicketAuditEventType, content string, fromValue string, toValue string) {
+	if service.auditRepository == nil {
+		return
+	}
+
+	// 审计事件在写操作发生时立即落地，这样谁做了什么、从什么值变成什么值可以被稳定追踪，而不是依赖查询时再回推。
+	service.auditRepository.Save(TicketAuditEvent{
+		TicketID:       ticket.ID,
+		OrganizationID: ticket.OrganizationID,
+		ActorID:        actorID,
+		Type:           eventType,
+		Content:        content,
+		FromValue:      fromValue,
+		ToValue:        toValue,
+		CreatedAt:      time.Now(),
+	})
 }
 
 func canCreateTicket(actor identity.IdentityContext) bool {
@@ -162,6 +307,6 @@ func canManageTicket(actor identity.IdentityContext, ticket Ticket) bool {
 		return false
 	}
 
-	// 指派和状态流转当前统一收敛为“工单写权限”，先把主动作边界稳定下来，后续 #4 再细分评论和审计动作。
+	// 指派、状态流转和内部备注统一收敛为“工单写权限”，先把协作边界稳定下来。
 	return actor.Permissions.Contains(identity.PermissionTicketWrite)
 }
