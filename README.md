@@ -50,6 +50,7 @@
 - `GET /api/v1/knowledge/documents/{id}/tasks`
 - `POST /api/v1/knowledge/documents/{id}/retry`
 - `POST /api/v1/ai/knowledge/bases/{id}/answers`
+- `POST /api/v1/ai/tickets/{id}/assist`
 - 环境变量加载与应用装配骨架
 - 基于 JWT 的最小认证链路
 - 基于租户角色的 RBAC 权限映射
@@ -214,6 +215,16 @@ curl -X POST http://localhost:8080/api/v1/ai/knowledge/bases/<knowledge_base_id>
 ```
 
 当检索置信度不足时，接口会返回 `degraded` 状态，而不是编造答案。
+
+生成工单 AI 辅助建议：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/ai/tickets/<ticket_id>/assist   -H 'Content-Type: application/json'   -H 'Authorization: Bearer <access_token>'   -d '{
+    "knowledge_base_id": "<knowledge_base_id>"
+  }'
+```
+
+该接口会返回分类建议、处理摘要、回复草稿，并将本次 AI 结果写入工单内部备注；系统不会自动修改工单主数据或自动回复用户。
 
 查询知识库列表：
 

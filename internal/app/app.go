@@ -62,6 +62,8 @@ func New() (*App, error) {
 		Retriever:       ai.NewVectorRetriever(ai.NewHashingEmbedder(128)),
 		AnswerGenerator: ai.TemplateAnswerGenerator{},
 		MinConfidence:   0.15,
+		TicketWorkspace: ticketService,
+		TicketAnalyzer:  ai.TemplateTicketAnalyzer{},
 	})
 
 	tokenManager := identity.NewTokenManager(cfg.AuthSigningKey, cfg.AuthTokenTTL)
