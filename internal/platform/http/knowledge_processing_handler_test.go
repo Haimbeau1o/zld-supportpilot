@@ -110,12 +110,13 @@ func newKnowledgeProcessingHarness(t *testing.T) knowledgeProcessingHarness {
 		knowledge.NewMemoryDocumentRepository(),
 		knowledge.NewMemoryObjectStorage(),
 		knowledge.WithProcessingPipeline(knowledge.ProcessingDependencies{
-			TaskRepository: taskRepository,
-			Dispatcher:     dispatcher,
-			Parser:         knowledge.PlainTextDocumentParser{},
-			Chunker:        knowledge.FixedSizeDocumentChunker{MaxCharacters: 64},
-			Indexer:        knowledge.NewMemoryChunkIndexer(chunkRepository),
-			MaxAttempts:    3,
+			TaskRepository:  taskRepository,
+			ChunkRepository: chunkRepository,
+			Dispatcher:      dispatcher,
+			Parser:          knowledge.PlainTextDocumentParser{},
+			Chunker:         knowledge.FixedSizeDocumentChunker{MaxCharacters: 64},
+			Indexer:         knowledge.NewMemoryChunkIndexer(chunkRepository),
+			MaxAttempts:     3,
 		}),
 	)
 	tokenManager := identity.NewTokenManager("test-signing-key", time.Hour)
