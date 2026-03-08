@@ -152,6 +152,47 @@ func TestAIEndUserCannotTriggerTicketAssist(t *testing.T) {
 	}
 }
 
+func TestAITicketAssistIsRateLimitedWhenConfigured(t *testing.T) {
+	harness := newTestAIMuxWithConfig(t, []knowledge.DocumentChunk{{ID: "chunk-1", DocumentID: "doc-1", KnowledgeBaseID: "kb-1", Content: "VPN 无法连接时，请先重置客户端，然后重新登录。"}}, 0.15, config.Config{
+		AppName:              "zld-supportpilot-test",
+		AppEnv:               "test",
+		HTTPAddr:             ":0",
+		HTTPRateLimitEnabled: true,
+		HTTPRateLimitRPS:     1,
+		HTTPRateLimitBurst:   1,
+	})
+	endUser := identity.IdentityContext{UserID: "user-end-1", OrganizationID: "org-1", Role: identity.RoleEndUser, Permissions: identity.RolePermissions(identity.RoleEndUser)}
+	agent := identity.IdentityContext{UserID: "user-agent-1", OrganizationID: "org-1", Role: identity.RoleAgent, Permissions: identity.RolePermissions(identity.RoleAgent)}
+
+	createdTicket, err := harness.ticketService.CreateTicket(endUser, ticket.CreateTicketInput{
+		Title:       "VPN 无法连接",
+		Description: "今天上午开始无法连接公司 VPN，重试后仍失败。",
+		Category:    "network",
+		Priority:    ticket.TicketPriorityHigh,
+	})
+	if err != nil {
+		t.Fatalf("create ticket: %v", err)
+	}
+
+	firstRequest := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/tickets/"+createdTicket.ID+"/assist", bytes.NewBufferString(`{"knowledge_base_id":"kb-1"}`))
+	firstRequest.Header.Set("Content-Type", "application/json")
+	firstRequest.Header.Set("Authorization", "Bearer "+issueKnowledgeToken(t, harness.tokenManager, agent))
+	firstRecorder := httptest.NewRecorder()
+	harness.handler.ServeHTTP(firstRecorder, firstRequest)
+	if firstRecorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected first assist status %d, got %d, body=%s", stdhttp.StatusOK, firstRecorder.Code, firstRecorder.Body.String())
+	}
+
+	secondRequest := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/tickets/"+createdTicket.ID+"/assist", bytes.NewBufferString(`{"knowledge_base_id":"kb-1"}`))
+	secondRequest.Header.Set("Content-Type", "application/json")
+	secondRequest.Header.Set("Authorization", "Bearer "+issueKnowledgeToken(t, harness.tokenManager, agent))
+	secondRecorder := httptest.NewRecorder()
+	harness.handler.ServeHTTP(secondRecorder, secondRequest)
+	if secondRecorder.Code != stdhttp.StatusTooManyRequests {
+		t.Fatalf("expected second assist status %d, got %d, body=%s", stdhttp.StatusTooManyRequests, secondRecorder.Code, secondRecorder.Body.String())
+	}
+}
+
 func TestAIRequiresAuthentication(t *testing.T) {
 	harness := newTestAIMux(t, nil, 0.15)
 	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/knowledge/bases/kb-1/answers", bytes.NewBufferString(`{"question":"VPN?"}`))
@@ -174,6 +215,26 @@ type aiTestHarness struct {
 func newTestAIMux(t *testing.T, chunks []knowledge.DocumentChunk, minConfidence float64) aiTestHarness {
 	t.Helper()
 
+	return newTestAIMuxWithConfig(t, chunks, minConfidence, config.Config{
+		AppName:  "zld-supportpilot-test",
+		AppEnv:   "test",
+		HTTPAddr: ":0",
+	})
+}
+
+func newTestAIMuxWithConfig(t *testing.T, chunks []knowledge.DocumentChunk, minConfidence float64, cfg config.Config) aiTestHarness {
+	t.Helper()
+
+	if cfg.AppName == "" {
+		cfg.AppName = "zld-supportpilot-test"
+	}
+	if cfg.AppEnv == "" {
+		cfg.AppEnv = "test"
+	}
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = ":0"
+	}
+
 	ticketService := ticket.NewService(
 		ticket.NewMemoryTicketRepository(),
 		ticket.WithCollaborationDependencies(ticket.CollaborationDependencies{
@@ -192,11 +253,7 @@ func newTestAIMux(t *testing.T, chunks []knowledge.DocumentChunk, minConfidence 
 	tokenManager := identity.NewTokenManager("test-signing-key", time.Hour)
 
 	return aiTestHarness{
-		handler: NewMuxWithRouteDependencies(config.Config{
-			AppName:  "zld-supportpilot-test",
-			AppEnv:   "test",
-			HTTPAddr: ":0",
-		}, RouteDependencies{
+		handler: NewMuxWithRouteDependencies(cfg, RouteDependencies{
 			Auth: &AuthDependencies{
 				TokenManager: tokenManager,
 			},

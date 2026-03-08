@@ -51,6 +51,7 @@
 - `POST /api/v1/knowledge/documents/{id}/retry`
 - `POST /api/v1/ai/knowledge/bases/{id}/answers`
 - `POST /api/v1/ai/tickets/{id}/assist`
+- `GET /debug/metrics/http`
 - 环境变量加载与应用装配骨架
 - 基于 JWT 的最小认证链路
 - 基于租户角色的 RBAC 权限映射
@@ -58,6 +59,9 @@
 - 基于知识库容器与元数据记录的文档上传链路
 - 基于后台 worker 的异步文档处理流水线（解析 / 切块 / 索引）
 - 基于内存向量检索与引用返回的 RAG 回答接口
+- 基于 `X-Request-ID` 的请求关联与结构化访问日志
+- 基于进程内聚合的 HTTP 指标快照
+- 基于令牌桶的关键路径限流（登录 / 文档上传 / 重试 / AI 问答）
 
 ## 学习型研发流程
 
@@ -102,6 +106,47 @@ go run ./cmd/api
 - `HTTP_ADDR`：监听地址，默认 `:8080`
 - `AUTH_SIGNING_KEY`：JWT 签名密钥，本地默认 `dev-only-signing-key`
 - `AUTH_TOKEN_TTL_SECONDS`：访问令牌有效期秒数，默认 `3600`
+- `HTTP_RATE_LIMIT_ENABLED`：是否启用应用层限流，默认 `true`
+- `HTTP_RATE_LIMIT_RPS`：限流令牌桶每秒补充速率，默认 `5`
+- `HTTP_RATE_LIMIT_BURST`：限流令牌桶突发容量，默认 `10`
+
+## 可观测性与限流说明
+
+### 请求关联
+
+- 每个已注册接口都会返回 `X-Request-ID`
+- 如果客户端已经传入 `X-Request-ID`，服务端会复用该值，方便串联调用链与日志
+- 访问日志会输出 `route`、`path`、`status`、`duration_ms`，在鉴权成功的接口上还会带出 `user_id` 与 `organization_id`
+
+### 指标查看
+
+```bash
+curl http://localhost:8080/debug/metrics/http
+```
+
+返回的是项目内可直接阅读的 JSON 快照，适合本地调试与面试演示。当前会聚合：
+
+- 请求总数 `requests_total`
+- 状态码分布 `status_totals`
+- 路由维度统计 `route_totals`
+- 延迟桶分布 `latency_ms_buckets`
+- 限流命中次数 `rate_limited_total`
+
+### 限流边界
+
+当前阶段只对“高风险或高成本”的关键路径施加限流：
+
+- `POST /api/v1/auth/login`
+- `POST /api/v1/knowledge/bases/{id}/documents`
+- `POST /api/v1/knowledge/documents/{id}/retry`
+- `POST /api/v1/ai/knowledge/bases/{id}/answers`
+- `POST /api/v1/ai/tickets/{id}/assist`
+
+触发限流时会返回：
+
+- HTTP 状态码 `429 Too Many Requests`
+- 统一错误结构 `{"error":{"code":"rate_limited",...}}`
+- `Retry-After` 响应头
 
 访问健康检查：
 
@@ -225,6 +270,20 @@ curl -X POST http://localhost:8080/api/v1/ai/tickets/<ticket_id>/assist   -H 'Co
 ```
 
 该接口会返回分类建议、处理摘要、回复草稿，并将本次 AI 结果写入工单内部备注；系统不会自动修改工单主数据或自动回复用户。
+
+## 演示建议
+
+建议按下面顺序做本地演示，这样最容易把“AI 应用能力 + 传统后端工程化”讲清楚：
+
+1. 启动服务后先调用 `/healthz`，展示响应头中的 `X-Request-ID`
+2. 注册并登录，拿到 `access_token`
+3. 创建知识库并上传一个简单文本或 PDF 文档
+4. 调用 AI 问答接口，展示返回的答案、引用和可能的 `degraded` 降级状态
+5. 调用工单 AI 辅助接口，展示分类建议、摘要、回复草稿和内部备注沉淀
+6. 访问 `/debug/metrics/http`，展示请求数、状态码分布和限流计数
+7. 连续触发登录或 AI 问答 / 工单 AI 辅助接口，演示 `429` 与 `Retry-After`
+
+如果要在面试或汇报里强调架构取舍，可以直接说明：当前仓库故意选择“请求 ID + 结构化日志 + 进程内指标 + 进程内令牌桶”的最小工程化闭环，而不是提前接入完整外部观测栈，这样更符合单进程 demo 阶段的真实复杂度。
 
 查询知识库列表：
 

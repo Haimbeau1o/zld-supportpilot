@@ -313,7 +313,7 @@ func handleTicketError(writer stdhttp.ResponseWriter, err error, fallbackMessage
 	}
 }
 
-func registerTicketRoutes(mux *stdhttp.ServeMux, authDependencies AuthDependencies, ticketDependencies TicketDependencies) error {
+func registerTicketRoutes(mux *stdhttp.ServeMux, runtime routeRuntime, authDependencies AuthDependencies, ticketDependencies TicketDependencies) error {
 	if authDependencies.TokenManager == nil {
 		return fmt.Errorf("token manager is required for ticket routes")
 	}
@@ -325,13 +325,13 @@ func registerTicketRoutes(mux *stdhttp.ServeMux, authDependencies AuthDependenci
 	ticketHandler := NewTicketHandler(ticketDependencies.TicketService)
 
 	// 工单接口全部挂在鉴权中间件之后，避免未来再出现“接口存在但忘了套身份边界”的隐性漏洞。
-	mux.Handle("POST /api/v1/tickets", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(ticketHandler.Create)))
-	mux.Handle("GET /api/v1/tickets", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(ticketHandler.List)))
-	mux.Handle("GET /api/v1/tickets/{id}", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(ticketHandler.Detail)))
-	mux.Handle("POST /api/v1/tickets/{id}/assign", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(ticketHandler.Assign)))
-	mux.Handle("POST /api/v1/tickets/{id}/status", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(ticketHandler.TransitionStatus)))
+	mux.Handle("POST /api/v1/tickets", runtime.protected("POST /api/v1/tickets", authMiddleware, stdhttp.HandlerFunc(ticketHandler.Create)))
+	mux.Handle("GET /api/v1/tickets", runtime.protected("GET /api/v1/tickets", authMiddleware, stdhttp.HandlerFunc(ticketHandler.List)))
+	mux.Handle("GET /api/v1/tickets/{id}", runtime.protected("GET /api/v1/tickets/{id}", authMiddleware, stdhttp.HandlerFunc(ticketHandler.Detail)))
+	mux.Handle("POST /api/v1/tickets/{id}/assign", runtime.protected("POST /api/v1/tickets/{id}/assign", authMiddleware, stdhttp.HandlerFunc(ticketHandler.Assign)))
+	mux.Handle("POST /api/v1/tickets/{id}/status", runtime.protected("POST /api/v1/tickets/{id}/status", authMiddleware, stdhttp.HandlerFunc(ticketHandler.TransitionStatus)))
 	// 协作评论与统一时间线同样必须落在同一鉴权边界内，保证公开评论和内部备注不会绕开权限模型。
-	mux.Handle("POST /api/v1/tickets/{id}/comments", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(ticketHandler.AddComment)))
-	mux.Handle("GET /api/v1/tickets/{id}/timeline", authMiddleware.RequireIdentity(stdhttp.HandlerFunc(ticketHandler.Timeline)))
+	mux.Handle("POST /api/v1/tickets/{id}/comments", runtime.protected("POST /api/v1/tickets/{id}/comments", authMiddleware, stdhttp.HandlerFunc(ticketHandler.AddComment)))
+	mux.Handle("GET /api/v1/tickets/{id}/timeline", runtime.protected("GET /api/v1/tickets/{id}/timeline", authMiddleware, stdhttp.HandlerFunc(ticketHandler.Timeline)))
 	return nil
 }
