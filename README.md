@@ -40,6 +40,8 @@
 - `GET /api/v1/tickets/{id}`
 - `POST /api/v1/tickets/{id}/assign`
 - `POST /api/v1/tickets/{id}/status`
+- `POST /api/v1/tickets/{id}/comments`
+- `GET /api/v1/tickets/{id}/timeline`
 - `POST /api/v1/knowledge/bases`
 - `GET /api/v1/knowledge/bases`
 - `POST /api/v1/knowledge/bases/{id}/documents`
@@ -126,6 +128,39 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
     "email": "alice@example.com",
     "password": "secret123"
   }'
+```
+
+创建工单：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/tickets \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{
+    "title": "VPN 无法连接",
+    "description": "今天上午开始无法连接公司 VPN",
+    "category": "network",
+    "priority": "high"
+  }'
+```
+
+追加公开评论：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/tickets/<ticket_id>/comments \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{
+    "type": "comment",
+    "content": "已补充故障截图，请继续排查。"
+  }'
+```
+
+查询工单时间线：
+
+```bash
+curl http://localhost:8080/api/v1/tickets/<ticket_id>/timeline \
+  -H 'Authorization: Bearer <access_token>'
 ```
 
 创建知识库：

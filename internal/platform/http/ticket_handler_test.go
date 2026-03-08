@@ -29,6 +29,32 @@ type ticketListResponsePayload struct {
 	Items []ticketResponsePayload `json:"items"`
 }
 
+type ticketCommentResponsePayload struct {
+	ID        string                   `json:"id"`
+	TicketID  string                   `json:"ticket_id"`
+	AuthorID  string                   `json:"author_id"`
+	Type      ticket.TicketCommentType `json:"type"`
+	Content   string                   `json:"content"`
+	CreatedAt string                   `json:"created_at"`
+}
+
+type ticketTimelineItemResponsePayload struct {
+	ID             string                        `json:"id"`
+	TicketID       string                        `json:"ticket_id"`
+	ActorID        string                        `json:"actor_id"`
+	ItemType       ticket.TicketTimelineItemType `json:"item_type"`
+	CommentType    ticket.TicketCommentType      `json:"comment_type"`
+	AuditEventType ticket.TicketAuditEventType   `json:"audit_event_type"`
+	Content        string                        `json:"content"`
+	FromValue      string                        `json:"from_value"`
+	ToValue        string                        `json:"to_value"`
+	CreatedAt      string                        `json:"created_at"`
+}
+
+type ticketTimelineResponsePayload struct {
+	Items []ticketTimelineItemResponsePayload `json:"items"`
+}
+
 func TestTicketCreate(t *testing.T) {
 	handler, tokenManager := newTestTicketMux(t)
 	endUser := identity.IdentityContext{
@@ -222,6 +248,203 @@ func TestTicketStatusTransition(t *testing.T) {
 	}
 }
 
+func TestTicketAddComment(t *testing.T) {
+	handler, tokenManager := newTestTicketMux(t)
+	endUser := identity.IdentityContext{
+		UserID:         "user-end-1",
+		OrganizationID: "org-1",
+		Role:           identity.RoleEndUser,
+		Permissions:    identity.RolePermissions(identity.RoleEndUser),
+	}
+
+	createdTicket := createTicketViaHTTP(t, handler, tokenManager, endUser, `{"title":"VPN 无法连接","description":"今天上午开始无法连接公司 VPN","category":"network","priority":"high"}`)
+
+	request := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/tickets/"+createdTicket.ID+"/comments",
+		bytes.NewBufferString(`{"type":"comment","content":"已补充错误截图，请继续排查。"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+issueToken(t, tokenManager, endUser))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusCreated, recorder.Code, recorder.Body.String())
+	}
+
+	var response ticketCommentResponsePayload
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode add comment response: %v", err)
+	}
+
+	if response.TicketID != createdTicket.ID {
+		t.Fatalf("expected ticket id %q, got %q", createdTicket.ID, response.TicketID)
+	}
+	if response.AuthorID != endUser.UserID {
+		t.Fatalf("expected author id %q, got %q", endUser.UserID, response.AuthorID)
+	}
+	if response.Type != ticket.TicketCommentTypeComment {
+		t.Fatalf("expected comment type %q, got %q", ticket.TicketCommentTypeComment, response.Type)
+	}
+}
+
+func TestTicketEndUserCannotAddInternalNote(t *testing.T) {
+	handler, tokenManager := newTestTicketMux(t)
+	endUser := identity.IdentityContext{
+		UserID:         "user-end-1",
+		OrganizationID: "org-1",
+		Role:           identity.RoleEndUser,
+		Permissions:    identity.RolePermissions(identity.RoleEndUser),
+	}
+
+	createdTicket := createTicketViaHTTP(t, handler, tokenManager, endUser, `{"title":"邮箱异常","description":"邮箱登录失败","category":"mail","priority":"medium"}`)
+
+	request := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/tickets/"+createdTicket.ID+"/comments",
+		bytes.NewBufferString(`{"type":"internal_note","content":"排查 AD 同步任务。"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+issueToken(t, tokenManager, endUser))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != stdhttp.StatusForbidden {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusForbidden, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestTicketTimelineForAgentReturnsAuditAndComment(t *testing.T) {
+	handler, tokenManager := newTestTicketMux(t)
+	endUser := identity.IdentityContext{
+		UserID:         "user-end-1",
+		OrganizationID: "org-1",
+		Role:           identity.RoleEndUser,
+		Permissions:    identity.RolePermissions(identity.RoleEndUser),
+	}
+	agent := identity.IdentityContext{
+		UserID:         "user-agent-1",
+		OrganizationID: "org-1",
+		Role:           identity.RoleAgent,
+		Permissions:    identity.RolePermissions(identity.RoleAgent),
+	}
+
+	createdTicket := createTicketViaHTTP(t, handler, tokenManager, endUser, `{"title":"共享盘无权限","description":"无法访问部门共享盘","category":"storage","priority":"high"}`)
+	addCommentViaHTTP(t, handler, tokenManager, agent, createdTicket.ID, `{"type":"comment","content":"已联系域控管理员协助排查。"}`, stdhttp.StatusCreated)
+
+	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tickets/"+createdTicket.ID+"/timeline", nil)
+	request.Header.Set("Authorization", "Bearer "+issueToken(t, tokenManager, agent))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusOK, recorder.Code, recorder.Body.String())
+	}
+
+	var response ticketTimelineResponsePayload
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode timeline response: %v", err)
+	}
+
+	if len(response.Items) < 2 {
+		t.Fatalf("expected timeline to include audit and comment items, got %d", len(response.Items))
+	}
+
+	var hasCreatedAudit bool
+	var hasComment bool
+	for _, item := range response.Items {
+		if item.ItemType == ticket.TicketTimelineItemTypeAuditEvent && item.AuditEventType == ticket.TicketAuditEventTypeCreated {
+			hasCreatedAudit = true
+		}
+		if item.ItemType == ticket.TicketTimelineItemTypeComment && item.CommentType == ticket.TicketCommentTypeComment {
+			hasComment = true
+		}
+	}
+
+	if !hasCreatedAudit {
+		t.Fatalf("expected created audit event in timeline")
+	}
+	if !hasComment {
+		t.Fatalf("expected public comment item in timeline")
+	}
+}
+
+func TestTicketTimelineHidesInternalNotesFromEndUser(t *testing.T) {
+	handler, tokenManager := newTestTicketMux(t)
+	endUser := identity.IdentityContext{
+		UserID:         "user-end-1",
+		OrganizationID: "org-1",
+		Role:           identity.RoleEndUser,
+		Permissions:    identity.RolePermissions(identity.RoleEndUser),
+	}
+	agent := identity.IdentityContext{
+		UserID:         "user-agent-1",
+		OrganizationID: "org-1",
+		Role:           identity.RoleAgent,
+		Permissions:    identity.RolePermissions(identity.RoleAgent),
+	}
+
+	createdTicket := createTicketViaHTTP(t, handler, tokenManager, endUser, `{"title":"账号锁定","description":"登录多次失败后被锁定","category":"account","priority":"urgent"}`)
+	addCommentViaHTTP(t, handler, tokenManager, agent, createdTicket.ID, `{"type":"comment","content":"已重置账号状态，请稍后重试。"}`, stdhttp.StatusCreated)
+	addCommentViaHTTP(t, handler, tokenManager, agent, createdTicket.ID, `{"type":"internal_note","content":"怀疑触发了异常登录告警。"}`, stdhttp.StatusCreated)
+
+	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tickets/"+createdTicket.ID+"/timeline", nil)
+	request.Header.Set("Authorization", "Bearer "+issueToken(t, tokenManager, endUser))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusOK, recorder.Code, recorder.Body.String())
+	}
+
+	var response ticketTimelineResponsePayload
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode timeline response: %v", err)
+	}
+
+	for _, item := range response.Items {
+		if item.CommentType == ticket.TicketCommentTypeInternalNote {
+			t.Fatalf("expected end user timeline to hide internal notes")
+		}
+	}
+}
+
+func TestTicketCollaborationRoutesRequireAuthentication(t *testing.T) {
+	handler, tokenManager := newTestTicketMux(t)
+	endUser := identity.IdentityContext{
+		UserID:         "user-end-1",
+		OrganizationID: "org-1",
+		Role:           identity.RoleEndUser,
+		Permissions:    identity.RolePermissions(identity.RoleEndUser),
+	}
+
+	createdTicket := createTicketViaHTTP(t, handler, tokenManager, endUser, `{"title":"打印机异常","description":"打印机无法打印","category":"device","priority":"low"}`)
+
+	commentRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/tickets/"+createdTicket.ID+"/comments",
+		bytes.NewBufferString(`{"type":"comment","content":"继续补充日志。"}`),
+	)
+	commentRequest.Header.Set("Content-Type", "application/json")
+	commentRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(commentRecorder, commentRequest)
+	if commentRecorder.Code != stdhttp.StatusUnauthorized {
+		t.Fatalf("expected comment route status %d, got %d, body=%s", stdhttp.StatusUnauthorized, commentRecorder.Code, commentRecorder.Body.String())
+	}
+
+	timelineRequest := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tickets/"+createdTicket.ID+"/timeline", nil)
+	timelineRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(timelineRecorder, timelineRequest)
+	if timelineRecorder.Code != stdhttp.StatusUnauthorized {
+		t.Fatalf("expected timeline route status %d, got %d, body=%s", stdhttp.StatusUnauthorized, timelineRecorder.Code, timelineRecorder.Body.String())
+	}
+}
+
 func TestTicketRequiresAuthentication(t *testing.T) {
 	handler, _ := newTestTicketMux(t)
 	request := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/tickets", nil)
@@ -237,7 +460,13 @@ func TestTicketRequiresAuthentication(t *testing.T) {
 func newTestTicketMux(t *testing.T) (*stdhttp.ServeMux, identity.TokenManager) {
 	t.Helper()
 
-	ticketService := ticket.NewService(ticket.NewMemoryTicketRepository())
+	ticketService := ticket.NewService(
+		ticket.NewMemoryTicketRepository(),
+		ticket.WithCollaborationDependencies(ticket.CollaborationDependencies{
+			CommentRepository: ticket.NewMemoryTicketCommentRepository(),
+			AuditRepository:   ticket.NewMemoryTicketAuditEventRepository(),
+		}),
+	)
 	tokenManager := identity.NewTokenManager("test-signing-key", time.Hour)
 
 	return NewMuxWithRouteDependencies(config.Config{
@@ -270,6 +499,29 @@ func createTicketViaHTTP(t *testing.T, handler stdhttp.Handler, tokenManager ide
 	var response ticketResponsePayload
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatalf("decode create ticket response: %v", err)
+	}
+
+	return response
+}
+
+func addCommentViaHTTP(t *testing.T, handler stdhttp.Handler, tokenManager identity.TokenManager, actor identity.IdentityContext, ticketID string, body string, expectedStatus int) ticketCommentResponsePayload {
+	t.Helper()
+
+	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/tickets/"+ticketID+"/comments", bytes.NewBufferString(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+issueToken(t, tokenManager, actor))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != expectedStatus {
+		t.Fatalf("expected add comment status %d, got %d, body=%s", expectedStatus, recorder.Code, recorder.Body.String())
+	}
+
+	var response ticketCommentResponsePayload
+	if expectedStatus == stdhttp.StatusCreated {
+		if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+			t.Fatalf("decode add comment response: %v", err)
+		}
 	}
 
 	return response
