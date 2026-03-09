@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/identity"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/knowledge"
@@ -23,16 +24,17 @@ type AnswerGenerator interface {
 	GenerateAnswer(ctx context.Context, question string, retrievedChunks []RetrievedChunk) (string, error)
 }
 
-// KnowledgeAnswerer 抽象已有的知识问答能力，便于 ticket assist 直接复用 RAG 结果。
+// KnowledgeAnswerer 抽象已有的知识问答能力，便于 ticket assist 与统一受理直接复用 RAG 结果。
 type KnowledgeAnswerer interface {
 	AskKnowledgeQuestion(ctx context.Context, actor identity.IdentityContext, input AskKnowledgeQuestionInput) (AnswerResult, error)
 }
 
-// TicketWorkspace 定义 AI 读取工单、读取时间线和写入内部备注的边界。
+// TicketWorkspace 定义 AI 读取工单、读取时间线、写备注与创建工单的边界。
 type TicketWorkspace interface {
 	GetTicket(actor identity.IdentityContext, ticketID string) (ticket.Ticket, error)
 	ListTicketTimeline(actor identity.IdentityContext, ticketID string) ([]ticket.TicketTimelineItem, error)
 	AddTicketComment(actor identity.IdentityContext, input ticket.AddTicketCommentInput) (ticket.TicketComment, error)
+	CreateTicket(actor identity.IdentityContext, input ticket.CreateTicketInput) (ticket.Ticket, error)
 }
 
 // TicketAnalyzer 负责把工单上下文和知识结果转换成 AI 建议。
@@ -140,6 +142,59 @@ func (service *Service) AskKnowledgeQuestion(ctx context.Context, actor identity
 		Answer:     answer,
 		Confidence: confidence,
 		Citations:  citations,
+	}, nil
+}
+
+func (service *Service) HandleUnifiedIntake(ctx context.Context, actor identity.IdentityContext, input UnifiedIntakeInput) (UnifiedIntakeResult, error) {
+	if service.knowledgeAnswerer == nil || service.ticketWorkspace == nil {
+		return UnifiedIntakeResult{}, fmt.Errorf("%w: unified intake dependencies are incomplete", ErrInvalidAIInput)
+	}
+
+	knowledgeBaseID := strings.TrimSpace(input.KnowledgeBaseID)
+	question := strings.TrimSpace(input.Question)
+	if knowledgeBaseID == "" {
+		return UnifiedIntakeResult{}, fmt.Errorf("%w: knowledge base id is required", ErrInvalidAIInput)
+	}
+	if question == "" {
+		return UnifiedIntakeResult{}, fmt.Errorf("%w: question is required", ErrInvalidAIInput)
+	}
+
+	knowledgeResult, err := service.knowledgeAnswerer.AskKnowledgeQuestion(ctx, actor, AskKnowledgeQuestionInput{
+		KnowledgeBaseID: knowledgeBaseID,
+		Question:        question,
+		TopK:            input.TopK,
+	})
+	if err != nil {
+		return UnifiedIntakeResult{}, err
+	}
+
+	if knowledgeResult.Status == AnswerStatusAnswered {
+		return UnifiedIntakeResult{
+			ResultType:   UnifiedIntakeResultTypeAnswered,
+			AnswerStatus: knowledgeResult.Status,
+			Answer:       knowledgeResult.Answer,
+			Confidence:   knowledgeResult.Confidence,
+			Citations:    knowledgeResult.Citations,
+		}, nil
+	}
+
+	createdTicket, err := service.ticketWorkspace.CreateTicket(actor, ticket.CreateTicketInput{
+		Title:       buildUnifiedIntakeTicketTitle(question),
+		Description: question,
+		Category:    "general",
+		Priority:    ticket.TicketPriorityMedium,
+	})
+	if err != nil {
+		return UnifiedIntakeResult{}, err
+	}
+
+	return UnifiedIntakeResult{
+		ResultType:   UnifiedIntakeResultTypeTicketCreated,
+		AnswerStatus: knowledgeResult.Status,
+		Answer:       knowledgeResult.Answer,
+		Confidence:   knowledgeResult.Confidence,
+		Citations:    knowledgeResult.Citations,
+		TicketID:     createdTicket.ID,
 	}, nil
 }
 
@@ -275,6 +330,20 @@ func buildTicketAssistQuestion(currentTicket ticket.Ticket, timeline []ticket.Ti
 		break
 	}
 	return builder.String()
+}
+
+func buildUnifiedIntakeTicketTitle(question string) string {
+	trimmed := strings.TrimSpace(question)
+	trimmed = strings.TrimSuffix(trimmed, "？")
+	trimmed = strings.TrimSuffix(trimmed, "?")
+	if trimmed == "" {
+		return "AI 受理问题"
+	}
+	if utf8.RuneCountInString(trimmed) <= 32 {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	return string(runes[:32]) + "..."
 }
 
 func suggestTicketCategory(input TicketAnalysisInput) string {

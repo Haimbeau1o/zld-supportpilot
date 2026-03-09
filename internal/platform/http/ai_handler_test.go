@@ -276,3 +276,94 @@ type aiTestChunkSource struct {
 func (source aiTestChunkSource) ListIndexedChunks(identity.IdentityContext, string) ([]knowledge.DocumentChunk, error) {
 	return source.chunks, nil
 }
+
+func TestAIIntakeReturnsAnsweredResult(t *testing.T) {
+	harness := newTestAIMux(t, []knowledge.DocumentChunk{{ID: "chunk-1", DocumentID: "doc-1", KnowledgeBaseID: "kb-1", Content: "VPN 无法连接时，请先重置客户端，然后重新登录。"}}, 0.15)
+	endUser := identity.IdentityContext{UserID: "user-end-1", OrganizationID: "org-1", Role: identity.RoleEndUser, Permissions: identity.RolePermissions(identity.RoleEndUser)}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/intakes", bytes.NewBufferString(`{"knowledge_base_id":"kb-1","question":"VPN 无法连接怎么办？","top_k":2}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+issueKnowledgeToken(t, harness.tokenManager, endUser))
+	recorder := httptest.NewRecorder()
+
+	harness.handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusOK, recorder.Code, recorder.Body.String())
+	}
+
+	var response aiUnifiedIntakeResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode intake response: %v", err)
+	}
+	if response.ResultType != "answered" {
+		t.Fatalf("expected result type answered, got %q", response.ResultType)
+	}
+	if response.AnswerStatus != ai.AnswerStatusAnswered {
+		t.Fatalf("expected answer status %q, got %q", ai.AnswerStatusAnswered, response.AnswerStatus)
+	}
+	if response.TicketID != "" {
+		t.Fatalf("expected empty ticket id, got %q", response.TicketID)
+	}
+}
+
+func TestAIIntakeCreatesTicketWhenKnowledgeIsInsufficient(t *testing.T) {
+	harness := newTestAIMux(t, nil, 0.15)
+	endUser := identity.IdentityContext{UserID: "user-end-1", OrganizationID: "org-1", Role: identity.RoleEndUser, Permissions: identity.RolePermissions(identity.RoleEndUser)}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/intakes", bytes.NewBufferString(`{"knowledge_base_id":"kb-1","question":"VPN 无法连接怎么办？","top_k":2}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+issueKnowledgeToken(t, harness.tokenManager, endUser))
+	recorder := httptest.NewRecorder()
+
+	harness.handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusOK, recorder.Code, recorder.Body.String())
+	}
+
+	var response aiUnifiedIntakeResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode intake response: %v", err)
+	}
+	if response.ResultType != "ticket_created" {
+		t.Fatalf("expected result type ticket_created, got %q", response.ResultType)
+	}
+	if response.TicketID == "" {
+		t.Fatalf("expected ticket id to be returned")
+	}
+
+	tickets, err := harness.ticketService.ListTickets(endUser, ticket.ListTicketsInput{})
+	if err != nil {
+		t.Fatalf("list tickets: %v", err)
+	}
+	if len(tickets) != 1 {
+		t.Fatalf("expected 1 created ticket, got %d", len(tickets))
+	}
+}
+
+func TestAIIntakeRejectsInvalidJSON(t *testing.T) {
+	harness := newTestAIMux(t, nil, 0.15)
+	endUser := identity.IdentityContext{UserID: "user-end-1", OrganizationID: "org-1", Role: identity.RoleEndUser, Permissions: identity.RolePermissions(identity.RoleEndUser)}
+	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/intakes", bytes.NewBufferString(`{"knowledge_base_id":`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+issueKnowledgeToken(t, harness.tokenManager, endUser))
+	recorder := httptest.NewRecorder()
+
+	harness.handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAIIntakeRequiresAuthentication(t *testing.T) {
+	harness := newTestAIMux(t, nil, 0.15)
+	request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/ai/intakes", bytes.NewBufferString(`{"knowledge_base_id":"kb-1","question":"VPN?"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+
+	harness.handler.ServeHTTP(recorder, request)
+
+	if recorder.Code != stdhttp.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	}
+}

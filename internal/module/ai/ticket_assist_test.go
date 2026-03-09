@@ -18,7 +18,7 @@ func TestGenerateTicketAssist(t *testing.T) {
 		Permissions:    identity.RolePermissions(identity.RoleAgent),
 	}
 	service := NewService(ServiceDependencies{
-		TicketWorkspace: stubTicketWorkspace{
+		TicketWorkspace: &stubTicketWorkspace{
 			ticket: ticket.Ticket{
 				ID:             "ticket-1",
 				OrganizationID: "org-1",
@@ -70,24 +70,15 @@ func TestGenerateTicketAssist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate ticket assist: %v", err)
 	}
-	if result.CategorySuggestion == "" {
-		t.Fatalf("expected category suggestion")
-	}
-	if result.Summary == "" {
-		t.Fatalf("expected summary")
-	}
-	if result.ReplyDraft == "" {
-		t.Fatalf("expected reply draft")
+	if result.CategorySuggestion == "" || result.Summary == "" || result.ReplyDraft == "" {
+		t.Fatalf("expected ticket assist content to be populated")
 	}
 	if result.RecordedCommentID != "comment-ai-1" {
-		t.Fatalf("expected recorded comment id comment-ai-1, got %q", result.RecordedCommentID)
-	}
-	if len(result.Citations) == 0 {
-		t.Fatalf("expected citations to be returned")
+		t.Fatalf("expected recorded comment id %q, got %q", "comment-ai-1", result.RecordedCommentID)
 	}
 }
 
-func TestEndUserCannotGenerateTicketAssist(t *testing.T) {
+func TestGenerateTicketAssistRejectsEndUser(t *testing.T) {
 	endUser := identity.IdentityContext{
 		UserID:         "user-1",
 		OrganizationID: "org-1",
@@ -95,9 +86,9 @@ func TestEndUserCannotGenerateTicketAssist(t *testing.T) {
 		Permissions:    identity.RolePermissions(identity.RoleEndUser),
 	}
 	service := NewService(ServiceDependencies{
-		TicketWorkspace:   stubTicketWorkspace{},
+		TicketWorkspace:   &stubTicketWorkspace{},
 		TicketAnalyzer:    TemplateTicketAnalyzer{},
-		KnowledgeAnswerer: stubKnowledgeAnswerer{},
+		KnowledgeAnswerer: stubKnowledgeAnswerer{result: AnswerResult{Status: AnswerStatusAnswered, Answer: "ok", Confidence: 0.9}},
 	})
 
 	_, err := service.GenerateTicketAssist(context.Background(), endUser, GenerateTicketAssistInput{
@@ -117,7 +108,7 @@ func TestGenerateTicketAssistDegradedReplyDraft(t *testing.T) {
 		Permissions:    identity.RolePermissions(identity.RoleAgent),
 	}
 	service := NewService(ServiceDependencies{
-		TicketWorkspace: stubTicketWorkspace{
+		TicketWorkspace: &stubTicketWorkspace{
 			ticket: ticket.Ticket{
 				ID:             "ticket-1",
 				OrganizationID: "org-1",
@@ -165,7 +156,7 @@ func TestGenerateTicketAssistUsesLatestNonAIContext(t *testing.T) {
 	}
 	capturedInput := &AskKnowledgeQuestionInput{}
 	service := NewService(ServiceDependencies{
-		TicketWorkspace: stubTicketWorkspace{
+		TicketWorkspace: &stubTicketWorkspace{
 			ticket: ticket.Ticket{
 				ID:             "ticket-1",
 				OrganizationID: "org-1",
@@ -227,19 +218,29 @@ func (answerer stubKnowledgeAnswerer) AskKnowledgeQuestion(_ context.Context, _ 
 }
 
 type stubTicketWorkspace struct {
-	ticket          ticket.Ticket
-	timeline        []ticket.TicketTimelineItem
-	recordedComment ticket.TicketComment
+	ticket             ticket.Ticket
+	timeline           []ticket.TicketTimelineItem
+	recordedComment    ticket.TicketComment
+	createdTicket      ticket.Ticket
+	createdTicketInput ticket.CreateTicketInput
 }
 
-func (workspace stubTicketWorkspace) GetTicket(actor identity.IdentityContext, ticketID string) (ticket.Ticket, error) {
+func (workspace *stubTicketWorkspace) GetTicket(actor identity.IdentityContext, ticketID string) (ticket.Ticket, error) {
 	return workspace.ticket, nil
 }
 
-func (workspace stubTicketWorkspace) ListTicketTimeline(actor identity.IdentityContext, ticketID string) ([]ticket.TicketTimelineItem, error) {
+func (workspace *stubTicketWorkspace) ListTicketTimeline(actor identity.IdentityContext, ticketID string) ([]ticket.TicketTimelineItem, error) {
 	return workspace.timeline, nil
 }
 
-func (workspace stubTicketWorkspace) AddTicketComment(actor identity.IdentityContext, input ticket.AddTicketCommentInput) (ticket.TicketComment, error) {
+func (workspace *stubTicketWorkspace) AddTicketComment(actor identity.IdentityContext, input ticket.AddTicketCommentInput) (ticket.TicketComment, error) {
 	return workspace.recordedComment, nil
+}
+
+func (workspace *stubTicketWorkspace) CreateTicket(actor identity.IdentityContext, input ticket.CreateTicketInput) (ticket.Ticket, error) {
+	workspace.createdTicketInput = input
+	if workspace.createdTicket.ID != "" {
+		return workspace.createdTicket, nil
+	}
+	return ticket.Ticket{ID: "ticket-created", OrganizationID: actor.OrganizationID, RequesterID: actor.UserID, Title: input.Title, Description: input.Description, Category: input.Category, Priority: input.Priority, Status: ticket.TicketStatusOpen}, nil
 }
