@@ -56,6 +56,8 @@ type Service struct {
 	knowledgeBaseRepository KnowledgeBaseRepository
 	documentRepository      DocumentRepository
 	objectStorage           ObjectStorage
+	candidateRepository     KnowledgeCandidateRepository
+	ticketSource            TicketSource
 	taskRepository          DocumentProcessingTaskRepository
 	chunkRepository         DocumentChunkRepository
 	dispatcher              ProcessingTaskDispatcher

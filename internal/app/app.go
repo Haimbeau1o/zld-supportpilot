@@ -45,6 +45,7 @@ func New() (*App, error) {
 	var ticketService *ticket.Service
 	var knowledgeBaseRepository knowledge.KnowledgeBaseRepository
 	var documentRepository knowledge.DocumentRepository
+	var candidateRepository knowledge.KnowledgeCandidateRepository
 	var taskRepository knowledge.DocumentProcessingTaskRepository
 	var chunkRepository knowledge.DocumentChunkRepository
 	var intakeRepository ai.UnifiedIntakeRepository
@@ -67,6 +68,7 @@ func New() (*App, error) {
 		)
 		knowledgeBaseRepository = knowledge.NewMemoryKnowledgeBaseRepository()
 		documentRepository = knowledge.NewMemoryDocumentRepository()
+		candidateRepository = knowledge.NewMemoryKnowledgeCandidateRepository()
 		taskRepository = knowledge.NewMemoryDocumentProcessingTaskRepository()
 		chunkRepository = knowledge.NewMemoryDocumentChunkRepository()
 		intakeRepository = ai.NewMemoryUnifiedIntakeRepository()
@@ -92,6 +94,7 @@ func New() (*App, error) {
 		)
 		knowledgeBaseRepository = knowledge.NewPostgresKnowledgeBaseRepository(db)
 		documentRepository = knowledge.NewPostgresDocumentRepository(db)
+		candidateRepository = knowledge.NewPostgresKnowledgeCandidateRepository(db)
 		taskRepository = knowledge.NewPostgresDocumentProcessingTaskRepository(db)
 		chunkRepository = knowledge.NewPostgresDocumentChunkRepository(db)
 		intakeRepository = ai.NewPostgresUnifiedIntakeRepository(db)
@@ -126,6 +129,10 @@ func New() (*App, error) {
 			Chunker:         knowledge.FixedSizeDocumentChunker{MaxCharacters: 200},
 			Indexer:         knowledge.NewMemoryChunkIndexer(chunkRepository),
 			MaxAttempts:     3,
+		}),
+		knowledge.WithCandidateWorkflow(knowledge.CandidateWorkflowDependencies{
+			CandidateRepository: candidateRepository,
+			TicketSource:        ticketService,
 		}),
 	)
 	asyncProcessor := knowledge.NewAsyncProcessor(processingQueue, 1, knowledgeService.ProcessTask)

@@ -20,6 +20,9 @@ type knowledgeService interface {
 	GetDocument(actor identity.IdentityContext, documentID string) (knowledge.Document, error)
 	ListDocumentProcessingTasks(actor identity.IdentityContext, documentID string) ([]knowledge.DocumentProcessingTask, error)
 	RetryDocumentProcessing(actor identity.IdentityContext, documentID string) (knowledge.DocumentProcessingTask, error)
+	CreateKnowledgeCandidateFromTicket(actor identity.IdentityContext, input knowledge.CreateKnowledgeCandidateFromTicketInput) (knowledge.KnowledgeCandidate, error)
+	ListKnowledgeCandidates(actor identity.IdentityContext, input knowledge.ListKnowledgeCandidatesInput) ([]knowledge.KnowledgeCandidate, error)
+	ReviewKnowledgeCandidate(actor identity.IdentityContext, input knowledge.ReviewKnowledgeCandidateInput) (knowledge.KnowledgeCandidate, error)
 }
 
 type KnowledgeDependencies struct {
@@ -292,14 +295,18 @@ func handleKnowledgeError(writer stdhttp.ResponseWriter, err error, fallbackMess
 		writeError(writer, stdhttp.StatusNotFound, "knowledge_base_not_found", "知识库不存在")
 	case errors.Is(err, knowledge.ErrDocumentNotFound):
 		writeError(writer, stdhttp.StatusNotFound, "document_not_found", "文档不存在")
+	case errors.Is(err, knowledge.ErrKnowledgeCandidateNotFound):
+		writeError(writer, stdhttp.StatusNotFound, "knowledge_candidate_not_found", "知识候选不存在")
 	case errors.Is(err, knowledge.ErrDocumentProcessingTaskNotFound):
 		writeError(writer, stdhttp.StatusNotFound, "document_processing_task_not_found", "文档处理任务不存在")
-	case errors.Is(err, knowledge.ErrInvalidKnowledgeInput), errors.Is(err, knowledge.ErrInvalidDocumentInput):
+	case errors.Is(err, knowledge.ErrInvalidKnowledgeInput), errors.Is(err, knowledge.ErrInvalidDocumentInput), errors.Is(err, knowledge.ErrInvalidKnowledgeCandidateInput):
 		writeError(writer, stdhttp.StatusBadRequest, "invalid_knowledge_request", err.Error())
 	case errors.Is(err, knowledge.ErrDocumentRetryNotAllowed):
 		writeError(writer, stdhttp.StatusConflict, "document_retry_not_allowed", err.Error())
 	case errors.Is(err, knowledge.ErrKnowledgeProcessingDisabled):
 		writeError(writer, stdhttp.StatusServiceUnavailable, "knowledge_processing_unavailable", "当前环境未启用文档异步处理")
+	case errors.Is(err, knowledge.ErrKnowledgeCandidateWorkflowDisabled):
+		writeError(writer, stdhttp.StatusServiceUnavailable, "knowledge_candidate_workflow_unavailable", "当前环境未启用知识候选审核流")
 	default:
 		writeError(writer, stdhttp.StatusInternalServerError, "internal_error", fallbackMessage)
 	}
@@ -319,6 +326,10 @@ func registerKnowledgeRoutes(mux *stdhttp.ServeMux, runtime routeRuntime, authDe
 	// 知识库与文档接口全部挂在鉴权之后，避免后续接入异步处理或检索链路时出现“资源有归属但接口没身份边界”的问题。
 	mux.Handle("POST /api/v1/knowledge/bases", runtime.protected("POST /api/v1/knowledge/bases", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.CreateKnowledgeBase)))
 	mux.Handle("GET /api/v1/knowledge/bases", runtime.protected("GET /api/v1/knowledge/bases", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.ListKnowledgeBases)))
+	// 候选知识创建与审核会引出后续知识入库动作，因此同样作为高成本写接口纳入限流边界。
+	mux.Handle("POST /api/v1/knowledge/candidates", runtime.protectedRateLimited("POST /api/v1/knowledge/candidates", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(knowledgeHandler.CreateKnowledgeCandidate)))
+	mux.Handle("GET /api/v1/knowledge/candidates", runtime.protected("GET /api/v1/knowledge/candidates", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.ListKnowledgeCandidates)))
+	mux.Handle("POST /api/v1/knowledge/candidates/{id}/review", runtime.protectedRateLimited("POST /api/v1/knowledge/candidates/{id}/review", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(knowledgeHandler.ReviewKnowledgeCandidate)))
 	// 文档上传与重试会消耗解析、切块和索引资源，因此被定义为当前阶段的高成本限流边界。
 	mux.Handle("POST /api/v1/knowledge/bases/{id}/documents", runtime.protectedRateLimited("POST /api/v1/knowledge/bases/{id}/documents", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(knowledgeHandler.UploadDocument)))
 	mux.Handle("GET /api/v1/knowledge/bases/{id}/documents", runtime.protected("GET /api/v1/knowledge/bases/{id}/documents", authMiddleware, stdhttp.HandlerFunc(knowledgeHandler.ListDocuments)))

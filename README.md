@@ -46,6 +46,9 @@
 - `GET /api/v1/tickets/{id}/timeline`
 - `POST /api/v1/knowledge/bases`
 - `GET /api/v1/knowledge/bases`
+- `POST /api/v1/knowledge/candidates`
+- `GET /api/v1/knowledge/candidates`
+- `POST /api/v1/knowledge/candidates/{id}/review`
 - `POST /api/v1/knowledge/bases/{id}/documents`
 - `GET /api/v1/knowledge/bases/{id}/documents`
 - `GET /api/v1/knowledge/documents/{id}`
@@ -61,6 +64,7 @@
 - 基于 JWT 的最小认证链路
 - 基于租户角色的 RBAC 权限映射
 - 基于显式状态机的工单主流程
+- 基于已解决工单 -> 知识候选 -> 审核入库的知识沉淀链路
 - 基于知识库容器与元数据记录的文档上传链路
 - 基于后台 worker 的异步文档处理流水线（解析 / 切块 / 索引）
 - 基于内存向量检索与引用返回的 RAG 回答接口
@@ -69,7 +73,7 @@
 - 基于 `X-Request-ID` 的请求关联与结构化访问日志
 - 基于进程内聚合的 HTTP 指标快照
 - 基于令牌桶的关键路径限流（登录 / 文档上传 / 重试 / AI 问答）
-- 基于 PostgreSQL 的 identity / ticket / knowledge repository 持久化
+- 基于 PostgreSQL 的 identity / ticket / knowledge / knowledge candidate repository 持久化
 - 基于文件系统的原始文档对象存储
 - 启动期 PostgreSQL schema 初始化与 `memory / postgres` 双模式装配
 - 持久化模式下避免租户 ID 因服务重启产生碰撞
@@ -165,6 +169,8 @@ curl http://localhost:8080/debug/metrics/http
 当前阶段只对“高风险或高成本”的关键路径施加限流：
 
 - `POST /api/v1/auth/login`
+- `POST /api/v1/knowledge/candidates`
+- `POST /api/v1/knowledge/candidates/{id}/review`
 - `POST /api/v1/knowledge/bases/{id}/documents`
 - `POST /api/v1/knowledge/documents/{id}/retry`
 - `POST /api/v1/ai/knowledge/bases/{id}/answers`
@@ -251,6 +257,33 @@ curl -X POST http://localhost:8080/api/v1/knowledge/bases \
   -d '{
     "name": "IT 支持知识库",
     "description": "用于沉淀 IT 文档"
+  }'
+```
+
+从已解决工单沉淀知识候选：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/knowledge/candidates \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{
+    "ticket_id": "<ticket_id>",
+    "knowledge_base_id": "<knowledge_base_id>",
+    "title": "VPN 691 错误排查",
+    "summary": "通过重置账号拨号权限恢复",
+    "content": "处理步骤：检查账号状态，重置账号拨号权限，重新连接验证。"
+  }'
+```
+
+审核知识候选并入库：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/knowledge/candidates/<candidate_id>/review \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{
+    "action": "approve",
+    "comment": "内容可入库"
   }'
 ```
 
