@@ -47,6 +47,8 @@ func New() (*App, error) {
 	var documentRepository knowledge.DocumentRepository
 	var taskRepository knowledge.DocumentProcessingTaskRepository
 	var chunkRepository knowledge.DocumentChunkRepository
+	var intakeRepository ai.UnifiedIntakeRepository
+	var feedbackRepository ai.AnswerFeedbackRepository
 
 	switch cfg.PersistenceMode {
 	case "memory":
@@ -67,6 +69,8 @@ func New() (*App, error) {
 		documentRepository = knowledge.NewMemoryDocumentRepository()
 		taskRepository = knowledge.NewMemoryDocumentProcessingTaskRepository()
 		chunkRepository = knowledge.NewMemoryDocumentChunkRepository()
+		intakeRepository = ai.NewMemoryUnifiedIntakeRepository()
+		feedbackRepository = ai.NewMemoryAnswerFeedbackRepository()
 	case "postgres":
 		db, err := openPostgres(context.Background(), cfg.PostgresDSN)
 		if err != nil {
@@ -90,6 +94,8 @@ func New() (*App, error) {
 		documentRepository = knowledge.NewPostgresDocumentRepository(db)
 		taskRepository = knowledge.NewPostgresDocumentProcessingTaskRepository(db)
 		chunkRepository = knowledge.NewPostgresDocumentChunkRepository(db)
+		intakeRepository = ai.NewPostgresUnifiedIntakeRepository(db)
+		feedbackRepository = ai.NewPostgresAnswerFeedbackRepository(db)
 	default:
 		return nil, fmt.Errorf("unsupported persistence mode: %s", cfg.PersistenceMode)
 	}
@@ -127,12 +133,14 @@ func New() (*App, error) {
 	cleanup = append(cleanup, asyncProcessor.Close)
 
 	aiService := ai.NewService(ai.ServiceDependencies{
-		ChunkSource:     knowledgeService,
-		Retriever:       ai.NewVectorRetriever(ai.NewHashingEmbedder(128)),
-		AnswerGenerator: ai.TemplateAnswerGenerator{},
-		MinConfidence:   0.15,
-		TicketWorkspace: ticketService,
-		TicketAnalyzer:  ai.TemplateTicketAnalyzer{},
+		ChunkSource:        knowledgeService,
+		Retriever:          ai.NewVectorRetriever(ai.NewHashingEmbedder(128)),
+		AnswerGenerator:    ai.TemplateAnswerGenerator{},
+		MinConfidence:      0.15,
+		TicketWorkspace:    ticketService,
+		TicketAnalyzer:     ai.TemplateTicketAnalyzer{},
+		IntakeRepository:   intakeRepository,
+		FeedbackRepository: feedbackRepository,
 	})
 
 	tokenManager := identity.NewTokenManager(cfg.AuthSigningKey, cfg.AuthTokenTTL)

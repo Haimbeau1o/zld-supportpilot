@@ -119,3 +119,37 @@ CREATE TABLE IF NOT EXISTS knowledge_document_chunks (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_document_chunks_document_sequence ON knowledge_document_chunks (document_id, sequence, id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_document_chunks_base_created_at ON knowledge_document_chunks (knowledge_base_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS ai_unified_intakes (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    requester_id TEXT NOT NULL,
+    knowledge_base_id TEXT NOT NULL,
+    question TEXT NOT NULL,
+    result_type TEXT NOT NULL,
+    answer_status TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    confidence DOUBLE PRECISION NOT NULL,
+    ticket_id TEXT NOT NULL,
+    escalated_ticket_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_unified_intakes_org_created_at ON ai_unified_intakes (organization_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS ai_answer_feedbacks (
+    id TEXT PRIMARY KEY,
+    intake_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    comment TEXT NOT NULL,
+    ticket_action TEXT NOT NULL,
+    ticket_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_answer_feedbacks_intake_actor ON ai_answer_feedbacks (intake_id, actor_id);
+CREATE INDEX IF NOT EXISTS idx_ai_answer_feedbacks_org_created_at ON ai_answer_feedbacks (organization_id, created_at, id);
