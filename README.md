@@ -27,6 +27,8 @@
 - `pkg/llm`：模型抽象层
 - `deployments/docker`：本地依赖环境
 
+当前在 `internal/app` 已支持按配置切换 `memory / postgres` repository，并按配置切换 `memory / filesystem` 文档对象存储。
+
 ## 当前已实现
 
 当前首版基础能力已提供：
@@ -62,6 +64,10 @@
 - 基于 `X-Request-ID` 的请求关联与结构化访问日志
 - 基于进程内聚合的 HTTP 指标快照
 - 基于令牌桶的关键路径限流（登录 / 文档上传 / 重试 / AI 问答）
+- 基于 PostgreSQL 的 identity / ticket / knowledge repository 持久化
+- 基于文件系统的原始文档对象存储
+- 启动期 PostgreSQL schema 初始化与 `memory / postgres` 双模式装配
+- 持久化模式下避免租户 ID 因服务重启产生碰撞
 
 ## 学习型研发流程
 
@@ -91,6 +97,7 @@
 - `M1 - 基础能力`：认证、租户、RBAC
 - `M2 - 工单与知识库`：工单主流程、协作记录、文档上传、异步处理
 - `M3 - AI 与工程化`：RAG 问答、AI 辅助能力、观测、限流、发布整理
+- `M4 - 内用业务闭环化`：持久化底座、统一 AI 受理入口、反馈回流、知识候选审核、通知与运营
 
 ## 快速启动
 
@@ -109,6 +116,22 @@ go run ./cmd/api
 - `HTTP_RATE_LIMIT_ENABLED`：是否启用应用层限流，默认 `true`
 - `HTTP_RATE_LIMIT_RPS`：限流令牌桶每秒补充速率，默认 `5`
 - `HTTP_RATE_LIMIT_BURST`：限流令牌桶突发容量，默认 `10`
+- `APP_PERSISTENCE_MODE`：持久化模式，支持 `memory` / `postgres`，默认 `memory`
+- `POSTGRES_DSN`：PostgreSQL 连接串，在 `postgres` 模式下必填
+- `DOCUMENT_STORAGE_MODE`：文档对象存储模式，支持 `memory` / `filesystem`，默认 `memory`
+- `DOCUMENT_STORAGE_ROOT`：文件系统文档根目录，默认 `data/documents`
+
+### 启用 PostgreSQL 持久化（本地演示）
+
+```bash
+docker compose -f deployments/docker/docker-compose.yml up -d postgres
+APP_PERSISTENCE_MODE=postgres \
+DOCUMENT_STORAGE_MODE=filesystem \
+DOCUMENT_STORAGE_ROOT=./data/documents \
+go run ./cmd/api
+```
+
+首次启动会自动执行 schema 初始化。完成注册、建单、上传文档后，重启应用仍可读取 PostgreSQL 中的用户、工单、知识库、文档任务与切块元数据，原始文档内容则从本地文件系统目录恢复。
 
 ## 可观测性与限流说明
 

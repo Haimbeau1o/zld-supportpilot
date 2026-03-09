@@ -43,6 +43,49 @@ func TestRegister(t *testing.T) {
 	}
 }
 
+func TestRegisterGeneratesUniqueOrganizationIDAcrossRestart(t *testing.T) {
+	nextOrganizationSeq.Store(0)
+	t.Cleanup(func() { nextOrganizationSeq.Store(0) })
+
+	firstService := NewService(
+		NewMemoryUserRepository(),
+		NewMemoryMembershipRepository(),
+		fakePasswordManager{},
+	)
+	_, firstMembership, err := firstService.Register(RegisterInput{
+		Name:        "Alice",
+		Email:       "alice@example.com",
+		Password:    "secret123",
+		TenantName:  "中联数据支持中心",
+		DefaultRole: RoleTenantAdmin,
+	})
+	if err != nil {
+		t.Fatalf("expected first register success, got error: %v", err)
+	}
+
+	// 模拟服务重启后重新从零开始分配租户 ID，持久化模式下不应产生重复组织标识。
+	nextOrganizationSeq.Store(0)
+	secondService := NewService(
+		NewMemoryUserRepository(),
+		NewMemoryMembershipRepository(),
+		fakePasswordManager{},
+	)
+	_, secondMembership, err := secondService.Register(RegisterInput{
+		Name:        "Bob",
+		Email:       "bob@example.com",
+		Password:    "secret456",
+		TenantName:  "中联数据支持中心",
+		DefaultRole: RoleTenantAdmin,
+	})
+	if err != nil {
+		t.Fatalf("expected second register success, got error: %v", err)
+	}
+
+	if firstMembership.OrganizationID == secondMembership.OrganizationID {
+		t.Fatalf("expected organization ids to remain unique across restart, got duplicated id %q", firstMembership.OrganizationID)
+	}
+}
+
 func TestRegisterDuplicateEmail(t *testing.T) {
 	service := NewService(
 		NewMemoryUserRepository(),

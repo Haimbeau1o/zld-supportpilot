@@ -94,3 +94,53 @@ func TestLoadFallsBackWhenHTTPRateLimitConfigInvalid(t *testing.T) {
 		t.Fatalf("expected invalid rate limit burst to fall back to 10, got %d", cfg.HTTPRateLimitBurst)
 	}
 }
+
+func TestLoadProvidesDefaultPersistenceConfig(t *testing.T) {
+	t.Setenv("APP_PERSISTENCE_MODE", "")
+	t.Setenv("POSTGRES_DSN", "")
+	t.Setenv("DOCUMENT_STORAGE_MODE", "")
+	t.Setenv("DOCUMENT_STORAGE_ROOT", "")
+
+	cfg := Load()
+
+	if cfg.PersistenceMode != "memory" {
+		t.Fatalf("expected default persistence mode memory, got %q", cfg.PersistenceMode)
+	}
+
+	if cfg.PostgresDSN != "" {
+		t.Fatalf("expected default postgres dsn empty, got %q", cfg.PostgresDSN)
+	}
+
+	if cfg.DocumentStorageMode != "memory" {
+		t.Fatalf("expected default document storage mode memory, got %q", cfg.DocumentStorageMode)
+	}
+
+	if cfg.DocumentStorageRoot != "data/documents" {
+		t.Fatalf("expected default document storage root %q, got %q", "data/documents", cfg.DocumentStorageRoot)
+	}
+}
+
+func TestLoadReadsPersistenceConfigFromEnvironment(t *testing.T) {
+	t.Setenv("APP_PERSISTENCE_MODE", "postgres")
+	t.Setenv("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/supportpilot?sslmode=disable")
+	t.Setenv("DOCUMENT_STORAGE_MODE", "filesystem")
+	t.Setenv("DOCUMENT_STORAGE_ROOT", "/tmp/supportpilot-documents")
+
+	cfg := Load()
+
+	if cfg.PersistenceMode != "postgres" {
+		t.Fatalf("expected persistence mode postgres, got %q", cfg.PersistenceMode)
+	}
+
+	if cfg.PostgresDSN != "postgres://postgres:postgres@localhost:5432/supportpilot?sslmode=disable" {
+		t.Fatalf("expected postgres dsn from env, got %q", cfg.PostgresDSN)
+	}
+
+	if cfg.DocumentStorageMode != "filesystem" {
+		t.Fatalf("expected document storage mode filesystem, got %q", cfg.DocumentStorageMode)
+	}
+
+	if cfg.DocumentStorageRoot != "/tmp/supportpilot-documents" {
+		t.Fatalf("expected document storage root from env, got %q", cfg.DocumentStorageRoot)
+	}
+}
