@@ -213,13 +213,20 @@ func (service *Service) ListIndexedChunks(actor identity.IdentityContext, knowle
 	if service.chunkRepository == nil {
 		return nil, ErrKnowledgeProcessingDisabled
 	}
-
-	knowledgeBase, err := service.getAccessibleKnowledgeBase(actor, knowledgeBaseID)
-	if err != nil {
-		return nil, err
+	if !canReadPublishedKnowledge(actor) {
+		return nil, ErrKnowledgeForbidden
 	}
 
-	// AI 模块只消费已完成处理的 chunk 结果，不直接读取原始文档或处理中间态，避免跨模块职责漂移。
+	knowledgeBase, ok := service.knowledgeBaseRepository.FindByID(strings.TrimSpace(knowledgeBaseID))
+	if !ok {
+		return nil, ErrKnowledgeBaseNotFound
+	}
+	if actor.OrganizationID != knowledgeBase.OrganizationID {
+		return nil, ErrKnowledgeForbidden
+	}
+
+	// 已发布 chunk 是面向问答与自助服务的“发布态知识”，这里允许终端用户通过 AI 能力间接消费，
+	// 但仍不放开原始文档和知识库管理接口，避免把后台维护面直接暴露出去。
 	return service.chunkRepository.ListByKnowledgeBase(knowledgeBase.ID), nil
 }
 
@@ -429,6 +436,16 @@ func canManageKnowledge(actor identity.IdentityContext) bool {
 
 func canReadKnowledge(actor identity.IdentityContext) bool {
 	return actor.OrganizationID != "" && (actor.Permissions.Contains(identity.PermissionKnowledgeRead) || actor.Permissions.Contains(identity.PermissionKnowledgeWrite))
+}
+
+func canReadPublishedKnowledge(actor identity.IdentityContext) bool {
+	if actor.OrganizationID == "" {
+		return false
+	}
+	if canReadKnowledge(actor) {
+		return true
+	}
+	return actor.Permissions.Contains(identity.PermissionTicketSelfCreate) || actor.Permissions.Contains(identity.PermissionTicketSelfRead)
 }
 
 func buildStorageKey(document Document) string {

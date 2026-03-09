@@ -329,6 +329,34 @@ curl http://localhost:8080/api/v1/ai/feedback/stats \
   -H 'Authorization: Bearer <access_token>'
 ```
 
+## #28 主闭环演示
+
+当前仓库已经可以演示一条完整的内部 AI 服务台闭环：
+
+- 用户提问
+- AI 给出第一次泛化回答
+- 用户提交 `unresolved` 反馈
+- 系统创建工单
+- AI 对工单给出辅助建议并写入时间线
+- 人工解决工单
+- 从 resolved 工单整理知识候选并审核入库
+- 下一次相同问题直接命中新知识
+
+可以直接运行：
+
+```bash
+bash scripts/demo_issue_028_closed_loop.sh
+```
+
+可选环境变量：
+
+- `BASE_URL`：服务地址，默认 `http://localhost:8080`
+- `EMAIL`：演示账号邮箱，默认自动生成
+- `PASSWORD`：登录密码，默认 `secret123`
+- `QUESTION`：演示问题，默认 `VPN 691 错误怎么处理？`
+
+说明：当前公开注册流程只会创建一个租户管理员账号，脚本为了保证可复现，使用同一个账号串起整条闭环；多角色分工由自动化测试覆盖。
+
 查询文档处理任务：
 
 ```bash
