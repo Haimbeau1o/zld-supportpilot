@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,10 @@ type Config struct {
 	HTTPRateLimitEnabled bool
 	HTTPRateLimitRPS     float64
 	HTTPRateLimitBurst   int
+	PersistenceMode      string
+	PostgresDSN          string
+	DocumentStorageMode  string
+	DocumentStorageRoot  string
 }
 
 func Load() Config {
@@ -29,16 +34,37 @@ func Load() Config {
 		HTTPRateLimitEnabled: getenvBool("HTTP_RATE_LIMIT_ENABLED", true),
 		HTTPRateLimitRPS:     getenvFloat64("HTTP_RATE_LIMIT_RPS", 5),
 		HTTPRateLimitBurst:   getenvInt("HTTP_RATE_LIMIT_BURST", 10),
+		// 持久化模式默认仍走 memory，便于本地无依赖启动；切到 postgres 时由启动阶段强校验关键配置。
+		PersistenceMode:     getenvOneOf("APP_PERSISTENCE_MODE", "memory", "memory", "postgres"),
+		PostgresDSN:         strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
+		DocumentStorageMode: getenvOneOf("DOCUMENT_STORAGE_MODE", "memory", "memory", "filesystem"),
+		// 即使当前默认对象存储模式仍是 memory，也预留本地目录配置，便于后续切换到文件系统存储。
+		DocumentStorageRoot: getenv("DOCUMENT_STORAGE_ROOT", "data/documents"),
 	}
 }
 
 func getenv(key, fallback string) string {
-	value := os.Getenv(key)
+	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return fallback
 	}
 
 	return value
+}
+
+func getenvOneOf(key string, fallback string, allowedValues ...string) string {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	if value == "" {
+		return fallback
+	}
+
+	for _, candidate := range allowedValues {
+		if value == candidate {
+			return value
+		}
+	}
+
+	return fallback
 }
 
 func getenvBool(key string, fallback bool) bool {

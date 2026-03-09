@@ -2,11 +2,17 @@ package app
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"mime/multipart"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
+	"github.com/Haimbeau1o/zld-supportpilot/internal/platform/persistence"
 )
 
 type appLoginResponse struct {
@@ -39,6 +45,46 @@ func TestNewWiresAuthRoutes(t *testing.T) {
 
 	if recorder.Code != stdhttp.StatusCreated {
 		t.Fatalf("expected status %d, got %d, body=%s", stdhttp.StatusCreated, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestNewBootstrapsPostgresModeWithDependencies(t *testing.T) {
+	t.Setenv("APP_PERSISTENCE_MODE", "postgres")
+	t.Setenv("POSTGRES_DSN", "postgres://postgres:postgres@localhost:5432/supportpilot?sslmode=disable")
+	t.Setenv("DOCUMENT_STORAGE_MODE", "filesystem")
+	t.Setenv("DOCUMENT_STORAGE_ROOT", filepath.Join(t.TempDir(), "documents"))
+	t.Setenv("AUTH_SIGNING_KEY", "test-signing-key")
+	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
+
+	originalOpenPostgres := openPostgres
+	t.Cleanup(func() { openPostgres = originalOpenPostgres })
+	openPostgres = func(ctx context.Context, dsn string, options ...persistence.PostgresOption) (*sql.DB, error) {
+		db, _, err := sqlmock.New()
+		if err != nil {
+			return nil, err
+		}
+		return db, nil
+	}
+
+	application, err := New()
+	if err != nil {
+		t.Fatalf("expected postgres bootstrap success, got error: %v", err)
+	}
+	defer application.Close()
+}
+
+func TestNewReturnsErrorWhenPostgresModeMissingDSN(t *testing.T) {
+	t.Setenv("APP_PERSISTENCE_MODE", "postgres")
+	t.Setenv("POSTGRES_DSN", "")
+	t.Setenv("AUTH_SIGNING_KEY", "test-signing-key")
+	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
+
+	application, err := New()
+	if err == nil {
+		if application != nil {
+			_ = application.Close()
+		}
+		t.Fatalf("expected postgres mode without dsn to return error")
 	}
 }
 

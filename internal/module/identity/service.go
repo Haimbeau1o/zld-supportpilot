@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+
+	"github.com/Haimbeau1o/zld-supportpilot/internal/platform/persistence"
 )
 
 var (
@@ -104,6 +106,6 @@ func (service *Service) Login(input LoginInput) (IdentityContext, error) {
 }
 
 func nextOrganizationID() string {
-	sequence := nextOrganizationSeq.Add(1)
-	return fmt.Sprintf("org-%d", sequence)
+	// 租户 ID 一旦落入持久化存储，就不能依赖进程内自增序列，否则服务重启会与历史组织发生碰撞。
+	return persistence.NewID("org")
 }

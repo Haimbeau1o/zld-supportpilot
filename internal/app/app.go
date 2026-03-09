@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ai"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/identity"
@@ -10,7 +12,10 @@ import (
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ticket"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/platform/config"
 	platformhttp "github.com/Haimbeau1o/zld-supportpilot/internal/platform/http"
+	"github.com/Haimbeau1o/zld-supportpilot/internal/platform/persistence"
 )
+
+var openPostgres = persistence.OpenPostgres
 
 type App struct {
 	config  config.Config
@@ -21,25 +26,87 @@ type App struct {
 func New() (*App, error) {
 	cfg := config.Load()
 
-	// 当前阶段先使用内存适配，把认证、租户与 RBAC、工单主流程以及知识处理链路的边界稳定下来，避免数据库、对象存储和消息队列过早侵入主线开发。
-	identityService := identity.NewService(
-		identity.NewMemoryUserRepository(),
-		identity.NewMemoryMembershipRepository(),
-		identity.NewPasswordManager(),
-	)
-	ticketService := ticket.NewService(
-		ticket.NewMemoryTicketRepository(),
-		ticket.WithCollaborationDependencies(ticket.CollaborationDependencies{
-			CommentRepository: ticket.NewMemoryTicketCommentRepository(),
-			AuditRepository:   ticket.NewMemoryTicketAuditEventRepository(),
-		}),
-	)
+	if cfg.PersistenceMode == "postgres" && strings.TrimSpace(cfg.PostgresDSN) == "" {
+		return nil, fmt.Errorf("postgres persistence mode requires POSTGRES_DSN")
+	}
 
-	knowledgeBaseRepository := knowledge.NewMemoryKnowledgeBaseRepository()
-	documentRepository := knowledge.NewMemoryDocumentRepository()
-	taskRepository := knowledge.NewMemoryDocumentProcessingTaskRepository()
-	chunkRepository := knowledge.NewMemoryDocumentChunkRepository()
-	objectStorage := knowledge.NewMemoryObjectStorage()
+	cleanup := make([]func() error, 0, 2)
+	bootstrapSucceeded := false
+	defer func() {
+		if bootstrapSucceeded {
+			return
+		}
+		for index := len(cleanup) - 1; index >= 0; index-- {
+			_ = cleanup[index]()
+		}
+	}()
+
+	var identityService *identity.Service
+	var ticketService *ticket.Service
+	var knowledgeBaseRepository knowledge.KnowledgeBaseRepository
+	var documentRepository knowledge.DocumentRepository
+	var taskRepository knowledge.DocumentProcessingTaskRepository
+	var chunkRepository knowledge.DocumentChunkRepository
+
+	switch cfg.PersistenceMode {
+	case "memory":
+		// memory 模式继续承担默认开发体验，保证项目在无外部依赖时也能直接跑通主链路。
+		identityService = identity.NewService(
+			identity.NewMemoryUserRepository(),
+			identity.NewMemoryMembershipRepository(),
+			identity.NewPasswordManager(),
+		)
+		ticketService = ticket.NewService(
+			ticket.NewMemoryTicketRepository(),
+			ticket.WithCollaborationDependencies(ticket.CollaborationDependencies{
+				CommentRepository: ticket.NewMemoryTicketCommentRepository(),
+				AuditRepository:   ticket.NewMemoryTicketAuditEventRepository(),
+			}),
+		)
+		knowledgeBaseRepository = knowledge.NewMemoryKnowledgeBaseRepository()
+		documentRepository = knowledge.NewMemoryDocumentRepository()
+		taskRepository = knowledge.NewMemoryDocumentProcessingTaskRepository()
+		chunkRepository = knowledge.NewMemoryDocumentChunkRepository()
+	case "postgres":
+		db, err := openPostgres(context.Background(), cfg.PostgresDSN)
+		if err != nil {
+			return nil, fmt.Errorf("open postgres persistence: %w", err)
+		}
+		cleanup = append(cleanup, db.Close)
+
+		identityService = identity.NewService(
+			identity.NewPostgresUserRepository(db),
+			identity.NewPostgresMembershipRepository(db),
+			identity.NewPasswordManager(),
+		)
+		ticketService = ticket.NewService(
+			ticket.NewPostgresTicketRepository(db),
+			ticket.WithCollaborationDependencies(ticket.CollaborationDependencies{
+				CommentRepository: ticket.NewPostgresTicketCommentRepository(db),
+				AuditRepository:   ticket.NewPostgresTicketAuditEventRepository(db),
+			}),
+		)
+		knowledgeBaseRepository = knowledge.NewPostgresKnowledgeBaseRepository(db)
+		documentRepository = knowledge.NewPostgresDocumentRepository(db)
+		taskRepository = knowledge.NewPostgresDocumentProcessingTaskRepository(db)
+		chunkRepository = knowledge.NewPostgresDocumentChunkRepository(db)
+	default:
+		return nil, fmt.Errorf("unsupported persistence mode: %s", cfg.PersistenceMode)
+	}
+
+	var objectStorage knowledge.ObjectStorage
+	switch cfg.DocumentStorageMode {
+	case "memory":
+		objectStorage = knowledge.NewMemoryObjectStorage()
+	case "filesystem":
+		if strings.TrimSpace(cfg.DocumentStorageRoot) == "" {
+			return nil, fmt.Errorf("filesystem document storage mode requires DOCUMENT_STORAGE_ROOT")
+		}
+		objectStorage = knowledge.NewFileSystemObjectStorage(cfg.DocumentStorageRoot)
+	default:
+		return nil, fmt.Errorf("unsupported document storage mode: %s", cfg.DocumentStorageMode)
+	}
+
 	processingQueue := knowledge.NewMemoryProcessingQueue(32)
 	knowledgeService := knowledge.NewService(
 		knowledgeBaseRepository,
@@ -57,6 +124,8 @@ func New() (*App, error) {
 	)
 	asyncProcessor := knowledge.NewAsyncProcessor(processingQueue, 1, knowledgeService.ProcessTask)
 	asyncProcessor.Start()
+	cleanup = append(cleanup, asyncProcessor.Close)
+
 	aiService := ai.NewService(ai.ServiceDependencies{
 		ChunkSource:     knowledgeService,
 		Retriever:       ai.NewVectorRetriever(ai.NewHashingEmbedder(128)),
@@ -83,13 +152,14 @@ func New() (*App, error) {
 		},
 	})
 
+	bootstrapSucceeded = true
 	return &App{
 		config: cfg,
 		server: &http.Server{
 			Addr:    cfg.HTTPAddr,
 			Handler: mux,
 		},
-		cleanup: []func() error{asyncProcessor.Close},
+		cleanup: cleanup,
 	}, nil
 }
 
