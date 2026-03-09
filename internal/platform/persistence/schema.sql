@@ -89,6 +89,27 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_base_created_at ON knowledge_documents (knowledge_base_id, created_at, id);
 
+CREATE TABLE IF NOT EXISTS knowledge_candidates (
+    id TEXT PRIMARY KEY,
+    knowledge_base_id TEXT NOT NULL,
+    organization_id TEXT NOT NULL,
+    source_ticket_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    reviewed_by TEXT NOT NULL,
+    review_comment TEXT NOT NULL,
+    approved_document_id TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    reviewed_at TIMESTAMPTZ NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_candidates_base_created_at ON knowledge_candidates (knowledge_base_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_candidates_org_created_at ON knowledge_candidates (organization_id, created_at, id);
+
 CREATE TABLE IF NOT EXISTS knowledge_processing_tasks (
     id TEXT PRIMARY KEY,
     document_id TEXT NOT NULL,
