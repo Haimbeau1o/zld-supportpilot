@@ -9,6 +9,7 @@ import (
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ai"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/identity"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/knowledge"
+	"github.com/Haimbeau1o/zld-supportpilot/internal/module/notify"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ticket"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/platform/config"
 	platformhttp "github.com/Haimbeau1o/zld-supportpilot/internal/platform/http"
@@ -50,6 +51,7 @@ func New() (*App, error) {
 	var chunkRepository knowledge.DocumentChunkRepository
 	var intakeRepository ai.UnifiedIntakeRepository
 	var feedbackRepository ai.AnswerFeedbackRepository
+	var notificationService *notify.Service
 
 	switch cfg.PersistenceMode {
 	case "memory":
@@ -59,12 +61,15 @@ func New() (*App, error) {
 			identity.NewMemoryMembershipRepository(),
 			identity.NewPasswordManager(),
 		)
+		notificationChannels := buildNotificationChannels(cfg)
+		notificationService = notify.NewService(identityUserDirectory{identityService: identityService}, notificationChannels...)
 		ticketService = ticket.NewService(
 			ticket.NewMemoryTicketRepository(),
 			ticket.WithCollaborationDependencies(ticket.CollaborationDependencies{
 				CommentRepository: ticket.NewMemoryTicketCommentRepository(),
 				AuditRepository:   ticket.NewMemoryTicketAuditEventRepository(),
 			}),
+			ticket.WithNotificationPublisher(notificationService),
 		)
 		knowledgeBaseRepository = knowledge.NewMemoryKnowledgeBaseRepository()
 		documentRepository = knowledge.NewMemoryDocumentRepository()
@@ -85,12 +90,15 @@ func New() (*App, error) {
 			identity.NewPostgresMembershipRepository(db),
 			identity.NewPasswordManager(),
 		)
+		notificationChannels := buildNotificationChannels(cfg)
+		notificationService = notify.NewService(identityUserDirectory{identityService: identityService}, notificationChannels...)
 		ticketService = ticket.NewService(
 			ticket.NewPostgresTicketRepository(db),
 			ticket.WithCollaborationDependencies(ticket.CollaborationDependencies{
 				CommentRepository: ticket.NewPostgresTicketCommentRepository(db),
 				AuditRepository:   ticket.NewPostgresTicketAuditEventRepository(db),
 			}),
+			ticket.WithNotificationPublisher(notificationService),
 		)
 		knowledgeBaseRepository = knowledge.NewPostgresKnowledgeBaseRepository(db)
 		documentRepository = knowledge.NewPostgresDocumentRepository(db)
@@ -140,14 +148,15 @@ func New() (*App, error) {
 	cleanup = append(cleanup, asyncProcessor.Close)
 
 	aiService := ai.NewService(ai.ServiceDependencies{
-		ChunkSource:        knowledgeService,
-		Retriever:          ai.NewVectorRetriever(ai.NewHashingEmbedder(128)),
-		AnswerGenerator:    ai.TemplateAnswerGenerator{},
-		MinConfidence:      0.15,
-		TicketWorkspace:    ticketService,
-		TicketAnalyzer:     ai.TemplateTicketAnalyzer{},
-		IntakeRepository:   intakeRepository,
-		FeedbackRepository: feedbackRepository,
+		ChunkSource:           knowledgeService,
+		Retriever:             ai.NewVectorRetriever(ai.NewHashingEmbedder(128)),
+		AnswerGenerator:       ai.TemplateAnswerGenerator{},
+		MinConfidence:         0.15,
+		TicketWorkspace:       ticketService,
+		TicketAnalyzer:        ai.TemplateTicketAnalyzer{},
+		IntakeRepository:      intakeRepository,
+		FeedbackRepository:    feedbackRepository,
+		NotificationPublisher: notificationService,
 	})
 
 	tokenManager := identity.NewTokenManager(cfg.AuthSigningKey, cfg.AuthTokenTTL)
@@ -192,4 +201,30 @@ func (a *App) Close() error {
 		}
 	}
 	return firstErr
+}
+
+type identityUserDirectory struct {
+	identityService *identity.Service
+}
+
+func (directory identityUserDirectory) FindUserByID(userID string) (notify.User, bool) {
+	if directory.identityService == nil {
+		return notify.User{}, false
+	}
+	user, ok := directory.identityService.GetUser(userID)
+	if !ok {
+		return notify.User{}, false
+	}
+	return notify.User{ID: user.ID, Name: user.Name, Email: user.Email}, true
+}
+
+func buildNotificationChannels(cfg config.Config) []notify.Channel {
+	channels := make([]notify.Channel, 0, 2)
+	if cfg.NotificationEmailEnabled {
+		channels = append(channels, notify.NewEmailChannel(notify.NewLogMailSender()))
+	}
+	if len(cfg.NotificationWebhookURLs) > 0 {
+		channels = append(channels, notify.NewWebhookChannel(cfg.NotificationWebhookURLs, &http.Client{Timeout: cfg.NotificationWebhookTimeout}, cfg.NotificationWebhookTimeout))
+	}
+	return channels
 }

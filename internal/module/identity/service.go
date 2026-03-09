@@ -81,6 +81,10 @@ func (service *Service) Register(input RegisterInput) (User, Membership, error) 
 	return user, membership, nil
 }
 
+func (service *Service) GetUser(userID string) (User, bool) {
+	return service.userRepository.FindByID(strings.TrimSpace(userID))
+}
+
 func (service *Service) Login(input LoginInput) (IdentityContext, error) {
 	user, exists := service.userRepository.FindByEmail(strings.TrimSpace(strings.ToLower(input.Email)))
 	if !exists {
