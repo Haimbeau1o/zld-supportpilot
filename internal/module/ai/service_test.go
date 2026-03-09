@@ -97,7 +97,9 @@ func TestHandleUnifiedIntakeReturnsAnswerWhenKnowledgeIsConfident(t *testing.T) 
 	}
 	workspace := &stubTicketWorkspace{}
 	service := NewService(ServiceDependencies{
-		TicketWorkspace: workspace,
+		TicketWorkspace:    workspace,
+		IntakeRepository:   NewMemoryUnifiedIntakeRepository(),
+		FeedbackRepository: NewMemoryAnswerFeedbackRepository(),
 		KnowledgeAnswerer: stubKnowledgeAnswerer{result: AnswerResult{
 			Status:     AnswerStatusAnswered,
 			Answer:     "根据知识库资料，建议先重置 VPN 客户端。",
@@ -125,6 +127,9 @@ func TestHandleUnifiedIntakeReturnsAnswerWhenKnowledgeIsConfident(t *testing.T) 
 	if result.TicketID != "" {
 		t.Fatalf("expected no ticket id when directly answered, got %q", result.TicketID)
 	}
+	if result.IntakeID == "" {
+		t.Fatalf("expected intake id to be returned")
+	}
 	if workspace.createdTicketInput.Title != "" {
 		t.Fatalf("expected no ticket to be created when answered")
 	}
@@ -141,7 +146,9 @@ func TestHandleUnifiedIntakeCreatesTicketWhenKnowledgeIsDegraded(t *testing.T) {
 		createdTicket: ticket.Ticket{ID: "ticket-1", OrganizationID: "org-1", RequesterID: "user-1", Title: "VPN 无法连接怎么办？", Status: ticket.TicketStatusOpen},
 	}
 	service := NewService(ServiceDependencies{
-		TicketWorkspace: workspace,
+		TicketWorkspace:    workspace,
+		IntakeRepository:   NewMemoryUnifiedIntakeRepository(),
+		FeedbackRepository: NewMemoryAnswerFeedbackRepository(),
 		KnowledgeAnswerer: stubKnowledgeAnswerer{result: AnswerResult{
 			Status:     AnswerStatusDegraded,
 			Answer:     degradedAnswerResult().Answer,
@@ -164,6 +171,9 @@ func TestHandleUnifiedIntakeCreatesTicketWhenKnowledgeIsDegraded(t *testing.T) {
 	if result.TicketID != "ticket-1" {
 		t.Fatalf("expected ticket id %q, got %q", "ticket-1", result.TicketID)
 	}
+	if result.IntakeID == "" {
+		t.Fatalf("expected intake id to be returned")
+	}
 	if workspace.createdTicketInput.Description != "VPN 无法连接怎么办？" {
 		t.Fatalf("expected question to become ticket description, got %q", workspace.createdTicketInput.Description)
 	}
@@ -175,8 +185,10 @@ func TestHandleUnifiedIntakeCreatesTicketWhenKnowledgeIsDegraded(t *testing.T) {
 func TestHandleUnifiedIntakeRejectsEmptyQuestion(t *testing.T) {
 	endUser := identity.IdentityContext{OrganizationID: "org-1", Role: identity.RoleEndUser, Permissions: identity.RolePermissions(identity.RoleEndUser)}
 	service := NewService(ServiceDependencies{
-		TicketWorkspace:   &stubTicketWorkspace{},
-		KnowledgeAnswerer: stubKnowledgeAnswerer{},
+		TicketWorkspace:    &stubTicketWorkspace{},
+		IntakeRepository:   NewMemoryUnifiedIntakeRepository(),
+		FeedbackRepository: NewMemoryAnswerFeedbackRepository(),
+		KnowledgeAnswerer:  stubKnowledgeAnswerer{},
 	})
 
 	_, err := service.HandleUnifiedIntake(context.Background(), endUser, UnifiedIntakeInput{

@@ -25,8 +25,24 @@ type appKnowledgeBaseResponse struct {
 }
 
 type appUnifiedIntakeResponse struct {
+	IntakeID   string `json:"intake_id"`
 	ResultType string `json:"result_type"`
 	TicketID   string `json:"ticket_id"`
+}
+
+type appAnswerFeedbackResponse struct {
+	FeedbackID   string `json:"feedback_id"`
+	IntakeID     string `json:"intake_id"`
+	Status       string `json:"status"`
+	TicketAction string `json:"ticket_action"`
+	TicketID     string `json:"ticket_id"`
+}
+
+type appAnswerFeedbackStatsResponse struct {
+	Total      int `json:"total"`
+	Resolved   int `json:"resolved"`
+	Unresolved int `json:"unresolved"`
+	Inaccurate int `json:"inaccurate"`
 }
 
 func TestNewWiresAuthRoutes(t *testing.T) {
@@ -215,6 +231,152 @@ func TestNewWiresAIIntakeRoute(t *testing.T) {
 	}
 	if response.TicketID == "" {
 		t.Fatalf("expected ticket id to be returned")
+	}
+	if response.IntakeID == "" {
+		t.Fatalf("expected intake id to be returned")
+	}
+}
+
+func TestNewWiresAIAnswerFeedbackRoute(t *testing.T) {
+	t.Setenv("AUTH_SIGNING_KEY", "test-signing-key")
+	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
+
+	application, accessToken := bootstrapLoggedInApplication(t)
+	defer application.Close()
+
+	createKnowledgeBaseRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/knowledge/bases",
+		bytes.NewBufferString(`{"name":"IT 支持知识库","description":"用于沉淀 IT 文档"}`),
+	)
+	createKnowledgeBaseRequest.Header.Set("Content-Type", "application/json")
+	createKnowledgeBaseRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	createKnowledgeBaseRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(createKnowledgeBaseRecorder, createKnowledgeBaseRequest)
+	if createKnowledgeBaseRecorder.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected knowledge base status %d, got %d, body=%s", stdhttp.StatusCreated, createKnowledgeBaseRecorder.Code, createKnowledgeBaseRecorder.Body.String())
+	}
+
+	var knowledgeBaseResponse appKnowledgeBaseResponse
+	if err := json.NewDecoder(createKnowledgeBaseRecorder.Body).Decode(&knowledgeBaseResponse); err != nil {
+		t.Fatalf("decode knowledge base response: %v", err)
+	}
+
+	intakeRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/ai/intakes",
+		bytes.NewBufferString(fmt.Sprintf(`{"knowledge_base_id":"%s","question":"VPN 无法连接怎么办？","top_k":2}`, knowledgeBaseResponse.ID)),
+	)
+	intakeRequest.Header.Set("Content-Type", "application/json")
+	intakeRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	intakeRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(intakeRecorder, intakeRequest)
+	if intakeRecorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected intake status %d, got %d, body=%s", stdhttp.StatusOK, intakeRecorder.Code, intakeRecorder.Body.String())
+	}
+
+	var intakeResponse appUnifiedIntakeResponse
+	if err := json.NewDecoder(intakeRecorder.Body).Decode(&intakeResponse); err != nil {
+		t.Fatalf("decode intake response: %v", err)
+	}
+
+	feedbackRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/ai/intakes/"+intakeResponse.IntakeID+"/feedback",
+		bytes.NewBufferString(`{"status":"unresolved","comment":"仍未解决"}`),
+	)
+	feedbackRequest.Header.Set("Content-Type", "application/json")
+	feedbackRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	feedbackRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(feedbackRecorder, feedbackRequest)
+
+	if feedbackRecorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected feedback status %d, got %d, body=%s", stdhttp.StatusOK, feedbackRecorder.Code, feedbackRecorder.Body.String())
+	}
+
+	var response appAnswerFeedbackResponse
+	if err := json.NewDecoder(feedbackRecorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode feedback response: %v", err)
+	}
+	if response.TicketAction != "ticket_existing" {
+		t.Fatalf("expected ticket action ticket_existing, got %q", response.TicketAction)
+	}
+	if response.TicketID != intakeResponse.TicketID {
+		t.Fatalf("expected ticket id %q, got %q", intakeResponse.TicketID, response.TicketID)
+	}
+}
+
+func TestNewWiresAIAnswerFeedbackStatsRoute(t *testing.T) {
+	t.Setenv("AUTH_SIGNING_KEY", "test-signing-key")
+	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
+
+	application, accessToken := bootstrapLoggedInApplication(t)
+	defer application.Close()
+
+	createKnowledgeBaseRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/knowledge/bases",
+		bytes.NewBufferString(`{"name":"IT 支持知识库","description":"用于沉淀 IT 文档"}`),
+	)
+	createKnowledgeBaseRequest.Header.Set("Content-Type", "application/json")
+	createKnowledgeBaseRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	createKnowledgeBaseRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(createKnowledgeBaseRecorder, createKnowledgeBaseRequest)
+	if createKnowledgeBaseRecorder.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected knowledge base status %d, got %d, body=%s", stdhttp.StatusCreated, createKnowledgeBaseRecorder.Code, createKnowledgeBaseRecorder.Body.String())
+	}
+
+	var knowledgeBaseResponse appKnowledgeBaseResponse
+	if err := json.NewDecoder(createKnowledgeBaseRecorder.Body).Decode(&knowledgeBaseResponse); err != nil {
+		t.Fatalf("decode knowledge base response: %v", err)
+	}
+
+	intakeRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/ai/intakes",
+		bytes.NewBufferString(fmt.Sprintf(`{"knowledge_base_id":"%s","question":"VPN 无法连接怎么办？","top_k":2}`, knowledgeBaseResponse.ID)),
+	)
+	intakeRequest.Header.Set("Content-Type", "application/json")
+	intakeRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	intakeRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(intakeRecorder, intakeRequest)
+	if intakeRecorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected intake status %d, got %d, body=%s", stdhttp.StatusOK, intakeRecorder.Code, intakeRecorder.Body.String())
+	}
+
+	var intakeResponse appUnifiedIntakeResponse
+	if err := json.NewDecoder(intakeRecorder.Body).Decode(&intakeResponse); err != nil {
+		t.Fatalf("decode intake response: %v", err)
+	}
+
+	feedbackRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/ai/intakes/"+intakeResponse.IntakeID+"/feedback",
+		bytes.NewBufferString(`{"status":"unresolved"}`),
+	)
+	feedbackRequest.Header.Set("Content-Type", "application/json")
+	feedbackRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	feedbackRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(feedbackRecorder, feedbackRequest)
+	if feedbackRecorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected feedback status %d, got %d, body=%s", stdhttp.StatusOK, feedbackRecorder.Code, feedbackRecorder.Body.String())
+	}
+
+	statsRequest := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/ai/feedback/stats", nil)
+	statsRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	statsRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(statsRecorder, statsRequest)
+
+	if statsRecorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected stats status %d, got %d, body=%s", stdhttp.StatusOK, statsRecorder.Code, statsRecorder.Body.String())
+	}
+
+	var response appAnswerFeedbackStatsResponse
+	if err := json.NewDecoder(statsRecorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode stats response: %v", err)
+	}
+	if response.Total != 1 || response.Unresolved != 1 {
+		t.Fatalf("unexpected stats response: %+v", response)
 	}
 }
 

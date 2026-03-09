@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/identity"
@@ -12,7 +13,10 @@ import (
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ticket"
 )
 
-var ErrInvalidAIInput = errors.New("invalid ai input")
+var (
+	ErrInvalidAIInput        = errors.New("invalid ai input")
+	ErrUnifiedIntakeNotFound = errors.New("unified intake not found")
+)
 
 // ChunkSource 定义 AI 服务读取 ready chunk 的边界，避免 AI 直接介入知识处理流水线内部细节。
 type ChunkSource interface {
@@ -43,23 +47,27 @@ type TicketAnalyzer interface {
 }
 
 type ServiceDependencies struct {
-	ChunkSource       ChunkSource
-	Retriever         Retriever
-	AnswerGenerator   AnswerGenerator
-	MinConfidence     float64
-	TicketWorkspace   TicketWorkspace
-	TicketAnalyzer    TicketAnalyzer
-	KnowledgeAnswerer KnowledgeAnswerer
+	ChunkSource        ChunkSource
+	Retriever          Retriever
+	AnswerGenerator    AnswerGenerator
+	MinConfidence      float64
+	TicketWorkspace    TicketWorkspace
+	TicketAnalyzer     TicketAnalyzer
+	KnowledgeAnswerer  KnowledgeAnswerer
+	IntakeRepository   UnifiedIntakeRepository
+	FeedbackRepository AnswerFeedbackRepository
 }
 
 type Service struct {
-	chunkSource       ChunkSource
-	retriever         Retriever
-	answerGenerator   AnswerGenerator
-	minConfidence     float64
-	ticketWorkspace   TicketWorkspace
-	ticketAnalyzer    TicketAnalyzer
-	knowledgeAnswerer KnowledgeAnswerer
+	chunkSource        ChunkSource
+	retriever          Retriever
+	answerGenerator    AnswerGenerator
+	minConfidence      float64
+	ticketWorkspace    TicketWorkspace
+	ticketAnalyzer     TicketAnalyzer
+	knowledgeAnswerer  KnowledgeAnswerer
+	intakeRepository   UnifiedIntakeRepository
+	feedbackRepository AnswerFeedbackRepository
 }
 
 func NewService(dependencies ServiceDependencies) *Service {
@@ -68,13 +76,15 @@ func NewService(dependencies ServiceDependencies) *Service {
 		minConfidence = 0.15
 	}
 	service := &Service{
-		chunkSource:       dependencies.ChunkSource,
-		retriever:         dependencies.Retriever,
-		answerGenerator:   dependencies.AnswerGenerator,
-		minConfidence:     minConfidence,
-		ticketWorkspace:   dependencies.TicketWorkspace,
-		ticketAnalyzer:    dependencies.TicketAnalyzer,
-		knowledgeAnswerer: dependencies.KnowledgeAnswerer,
+		chunkSource:        dependencies.ChunkSource,
+		retriever:          dependencies.Retriever,
+		answerGenerator:    dependencies.AnswerGenerator,
+		minConfidence:      minConfidence,
+		ticketWorkspace:    dependencies.TicketWorkspace,
+		ticketAnalyzer:     dependencies.TicketAnalyzer,
+		knowledgeAnswerer:  dependencies.KnowledgeAnswerer,
+		intakeRepository:   dependencies.IntakeRepository,
+		feedbackRepository: dependencies.FeedbackRepository,
 	}
 	if service.knowledgeAnswerer == nil && service.chunkSource != nil && service.retriever != nil && service.answerGenerator != nil {
 		service.knowledgeAnswerer = service
@@ -146,7 +156,7 @@ func (service *Service) AskKnowledgeQuestion(ctx context.Context, actor identity
 }
 
 func (service *Service) HandleUnifiedIntake(ctx context.Context, actor identity.IdentityContext, input UnifiedIntakeInput) (UnifiedIntakeResult, error) {
-	if service.knowledgeAnswerer == nil || service.ticketWorkspace == nil {
+	if service.knowledgeAnswerer == nil || service.ticketWorkspace == nil || service.intakeRepository == nil {
 		return UnifiedIntakeResult{}, fmt.Errorf("%w: unified intake dependencies are incomplete", ErrInvalidAIInput)
 	}
 
@@ -168,34 +178,146 @@ func (service *Service) HandleUnifiedIntake(ctx context.Context, actor identity.
 		return UnifiedIntakeResult{}, err
 	}
 
-	if knowledgeResult.Status == AnswerStatusAnswered {
-		return UnifiedIntakeResult{
-			ResultType:   UnifiedIntakeResultTypeAnswered,
-			AnswerStatus: knowledgeResult.Status,
-			Answer:       knowledgeResult.Answer,
-			Confidence:   knowledgeResult.Confidence,
-			Citations:    knowledgeResult.Citations,
-		}, nil
-	}
-
-	createdTicket, err := service.ticketWorkspace.CreateTicket(actor, ticket.CreateTicketInput{
-		Title:       buildUnifiedIntakeTicketTitle(question),
-		Description: question,
-		Category:    "general",
-		Priority:    ticket.TicketPriorityMedium,
-	})
-	if err != nil {
-		return UnifiedIntakeResult{}, err
-	}
-
-	return UnifiedIntakeResult{
-		ResultType:   UnifiedIntakeResultTypeTicketCreated,
+	now := time.Now()
+	result := UnifiedIntakeResult{
 		AnswerStatus: knowledgeResult.Status,
 		Answer:       knowledgeResult.Answer,
 		Confidence:   knowledgeResult.Confidence,
 		Citations:    knowledgeResult.Citations,
-		TicketID:     createdTicket.ID,
+	}
+	record := UnifiedIntakeRecord{
+		OrganizationID:  actor.OrganizationID,
+		RequesterID:     actor.UserID,
+		KnowledgeBaseID: knowledgeBaseID,
+		Question:        question,
+		AnswerStatus:    knowledgeResult.Status,
+		Answer:          knowledgeResult.Answer,
+		Confidence:      knowledgeResult.Confidence,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+
+	if knowledgeResult.Status == AnswerStatusAnswered {
+		result.ResultType = UnifiedIntakeResultTypeAnswered
+		record.ResultType = UnifiedIntakeResultTypeAnswered
+	} else {
+		createdTicket, err := service.ticketWorkspace.CreateTicket(actor, ticket.CreateTicketInput{
+			Title:       buildUnifiedIntakeTicketTitle(question),
+			Description: question,
+			Category:    "general",
+			Priority:    ticket.TicketPriorityMedium,
+		})
+		if err != nil {
+			return UnifiedIntakeResult{}, err
+		}
+		result.ResultType = UnifiedIntakeResultTypeTicketCreated
+		result.TicketID = createdTicket.ID
+		record.ResultType = UnifiedIntakeResultTypeTicketCreated
+		record.TicketID = createdTicket.ID
+	}
+
+	savedRecord := service.intakeRepository.Save(record)
+	result.IntakeID = savedRecord.ID
+	return result, nil
+}
+
+func (service *Service) SubmitAnswerFeedback(ctx context.Context, actor identity.IdentityContext, input AnswerFeedbackInput) (AnswerFeedbackResult, error) {
+	_ = ctx
+	if service.intakeRepository == nil || service.feedbackRepository == nil || service.ticketWorkspace == nil {
+		return AnswerFeedbackResult{}, fmt.Errorf("%w: answer feedback dependencies are incomplete", ErrInvalidAIInput)
+	}
+
+	intakeID := strings.TrimSpace(input.IntakeID)
+	comment := strings.TrimSpace(input.Comment)
+	if intakeID == "" {
+		return AnswerFeedbackResult{}, fmt.Errorf("%w: intake id is required", ErrInvalidAIInput)
+	}
+	if !isValidAnswerFeedbackStatus(input.Status) {
+		return AnswerFeedbackResult{}, fmt.Errorf("%w: unsupported feedback status", ErrInvalidAIInput)
+	}
+
+	intakeRecord, ok := service.intakeRepository.FindByID(intakeID)
+	if !ok {
+		return AnswerFeedbackResult{}, ErrUnifiedIntakeNotFound
+	}
+	if actor.OrganizationID != intakeRecord.OrganizationID {
+		return AnswerFeedbackResult{}, ticket.ErrTicketForbidden
+	}
+
+	ticketAction := AnswerFeedbackTicketActionNone
+	ticketID := ""
+	if input.Status == AnswerFeedbackStatusUnresolved {
+		// 未解决反馈的目标不是重复问一遍 AI，而是确保问题真正进入人工跟进流程。
+		if linkedTicketID := resolveLinkedTicketID(intakeRecord); linkedTicketID != "" {
+			ticketAction = AnswerFeedbackTicketActionTicketExisting
+			ticketID = linkedTicketID
+		} else {
+			createdTicket, err := service.ticketWorkspace.CreateTicket(actor, ticket.CreateTicketInput{
+				Title:       buildUnifiedIntakeTicketTitle(intakeRecord.Question),
+				Description: buildFeedbackEscalationDescription(intakeRecord, comment),
+				Category:    "general",
+				Priority:    ticket.TicketPriorityMedium,
+			})
+			if err != nil {
+				return AnswerFeedbackResult{}, err
+			}
+			ticketAction = AnswerFeedbackTicketActionTicketCreated
+			ticketID = createdTicket.ID
+			intakeRecord.EscalatedTicketID = createdTicket.ID
+			intakeRecord.UpdatedAt = time.Now()
+			service.intakeRepository.Save(intakeRecord)
+		}
+	}
+
+	now := time.Now()
+	feedback := AnswerFeedback{
+		IntakeID:       intakeRecord.ID,
+		OrganizationID: actor.OrganizationID,
+		ActorID:        actor.UserID,
+		Status:         input.Status,
+		Comment:        comment,
+		TicketAction:   ticketAction,
+		TicketID:       ticketID,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if existing, ok := service.feedbackRepository.FindByIntakeAndActor(intakeRecord.ID, actor.UserID); ok {
+		feedback.ID = existing.ID
+		feedback.CreatedAt = existing.CreatedAt
+	}
+
+	savedFeedback := service.feedbackRepository.Save(feedback)
+	return AnswerFeedbackResult{
+		FeedbackID:   savedFeedback.ID,
+		IntakeID:     savedFeedback.IntakeID,
+		Status:       savedFeedback.Status,
+		TicketAction: savedFeedback.TicketAction,
+		TicketID:     savedFeedback.TicketID,
 	}, nil
+}
+
+func (service *Service) GetAnswerFeedbackStats(_ context.Context, actor identity.IdentityContext) (AnswerFeedbackStats, error) {
+	if service.feedbackRepository == nil {
+		return AnswerFeedbackStats{}, fmt.Errorf("%w: answer feedback dependencies are incomplete", ErrInvalidAIInput)
+	}
+	if !canReadAnswerFeedbackStats(actor) {
+		return AnswerFeedbackStats{}, ticket.ErrTicketForbidden
+	}
+
+	items := service.feedbackRepository.ListByOrganization(actor.OrganizationID)
+	stats := AnswerFeedbackStats{}
+	for _, item := range items {
+		stats.Total++
+		switch item.Status {
+		case AnswerFeedbackStatusResolved:
+			stats.Resolved++
+		case AnswerFeedbackStatusUnresolved:
+			stats.Unresolved++
+		case AnswerFeedbackStatusInaccurate:
+			stats.Inaccurate++
+		}
+	}
+	return stats, nil
 }
 
 func (service *Service) GenerateTicketAssist(ctx context.Context, actor identity.IdentityContext, input GenerateTicketAssistInput) (TicketAssistResult, error) {
@@ -302,6 +424,40 @@ func degradedAnswerResult() AnswerResult {
 		Confidence: 0,
 		Citations:  []Citation{},
 	}
+}
+
+func isValidAnswerFeedbackStatus(status AnswerFeedbackStatus) bool {
+	switch status {
+	case AnswerFeedbackStatusResolved, AnswerFeedbackStatusUnresolved, AnswerFeedbackStatusInaccurate:
+		return true
+	default:
+		return false
+	}
+}
+
+func canReadAnswerFeedbackStats(actor identity.IdentityContext) bool {
+	return actor.Permissions.Contains(identity.PermissionTicketRead)
+}
+
+func resolveLinkedTicketID(record UnifiedIntakeRecord) string {
+	if strings.TrimSpace(record.EscalatedTicketID) != "" {
+		return strings.TrimSpace(record.EscalatedTicketID)
+	}
+	return strings.TrimSpace(record.TicketID)
+}
+
+func buildFeedbackEscalationDescription(record UnifiedIntakeRecord, feedbackComment string) string {
+	builder := strings.Builder{}
+	builder.WriteString("来源：AI 答案反馈升级。\n")
+	builder.WriteString(fmt.Sprintf("原问题：%s\n", strings.TrimSpace(record.Question)))
+	if answer := strings.TrimSpace(record.Answer); answer != "" {
+		builder.WriteString(fmt.Sprintf("AI 原回答：%s\n", answer))
+	}
+	if comment := strings.TrimSpace(feedbackComment); comment != "" {
+		builder.WriteString(fmt.Sprintf("用户反馈：%s\n", comment))
+	}
+	builder.WriteString("说明：用户反馈该答案未解决，需升级到人工继续处理。")
+	return strings.TrimSpace(builder.String())
 }
 
 func canGenerateTicketAssist(actor identity.IdentityContext) bool {
