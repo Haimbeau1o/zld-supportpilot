@@ -10,6 +10,7 @@ import (
 
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/identity"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/knowledge"
+	"github.com/Haimbeau1o/zld-supportpilot/internal/module/notify"
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/ticket"
 )
 
@@ -46,28 +47,34 @@ type TicketAnalyzer interface {
 	AnalyzeTicket(input TicketAnalysisInput) TicketAnalysisResult
 }
 
+type NotificationPublisher interface {
+	Publish(ctx context.Context, event notify.Event) error
+}
+
 type ServiceDependencies struct {
-	ChunkSource        ChunkSource
-	Retriever          Retriever
-	AnswerGenerator    AnswerGenerator
-	MinConfidence      float64
-	TicketWorkspace    TicketWorkspace
-	TicketAnalyzer     TicketAnalyzer
-	KnowledgeAnswerer  KnowledgeAnswerer
-	IntakeRepository   UnifiedIntakeRepository
-	FeedbackRepository AnswerFeedbackRepository
+	ChunkSource           ChunkSource
+	Retriever             Retriever
+	AnswerGenerator       AnswerGenerator
+	MinConfidence         float64
+	TicketWorkspace       TicketWorkspace
+	TicketAnalyzer        TicketAnalyzer
+	KnowledgeAnswerer     KnowledgeAnswerer
+	IntakeRepository      UnifiedIntakeRepository
+	FeedbackRepository    AnswerFeedbackRepository
+	NotificationPublisher NotificationPublisher
 }
 
 type Service struct {
-	chunkSource        ChunkSource
-	retriever          Retriever
-	answerGenerator    AnswerGenerator
-	minConfidence      float64
-	ticketWorkspace    TicketWorkspace
-	ticketAnalyzer     TicketAnalyzer
-	knowledgeAnswerer  KnowledgeAnswerer
-	intakeRepository   UnifiedIntakeRepository
-	feedbackRepository AnswerFeedbackRepository
+	chunkSource           ChunkSource
+	retriever             Retriever
+	answerGenerator       AnswerGenerator
+	minConfidence         float64
+	ticketWorkspace       TicketWorkspace
+	ticketAnalyzer        TicketAnalyzer
+	knowledgeAnswerer     KnowledgeAnswerer
+	intakeRepository      UnifiedIntakeRepository
+	feedbackRepository    AnswerFeedbackRepository
+	notificationPublisher NotificationPublisher
 }
 
 func NewService(dependencies ServiceDependencies) *Service {
@@ -76,15 +83,16 @@ func NewService(dependencies ServiceDependencies) *Service {
 		minConfidence = 0.15
 	}
 	service := &Service{
-		chunkSource:        dependencies.ChunkSource,
-		retriever:          dependencies.Retriever,
-		answerGenerator:    dependencies.AnswerGenerator,
-		minConfidence:      minConfidence,
-		ticketWorkspace:    dependencies.TicketWorkspace,
-		ticketAnalyzer:     dependencies.TicketAnalyzer,
-		knowledgeAnswerer:  dependencies.KnowledgeAnswerer,
-		intakeRepository:   dependencies.IntakeRepository,
-		feedbackRepository: dependencies.FeedbackRepository,
+		chunkSource:           dependencies.ChunkSource,
+		retriever:             dependencies.Retriever,
+		answerGenerator:       dependencies.AnswerGenerator,
+		minConfidence:         minConfidence,
+		ticketWorkspace:       dependencies.TicketWorkspace,
+		ticketAnalyzer:        dependencies.TicketAnalyzer,
+		knowledgeAnswerer:     dependencies.KnowledgeAnswerer,
+		intakeRepository:      dependencies.IntakeRepository,
+		feedbackRepository:    dependencies.FeedbackRepository,
+		notificationPublisher: dependencies.NotificationPublisher,
 	}
 	if service.knowledgeAnswerer == nil && service.chunkSource != nil && service.retriever != nil && service.answerGenerator != nil {
 		service.knowledgeAnswerer = service
@@ -214,6 +222,7 @@ func (service *Service) HandleUnifiedIntake(ctx context.Context, actor identity.
 		result.TicketID = createdTicket.ID
 		record.ResultType = UnifiedIntakeResultTypeTicketCreated
 		record.TicketID = createdTicket.ID
+		service.publishEscalationNotification(ctx, actor, createdTicket, question, "intake_degraded")
 	}
 
 	savedRecord := service.intakeRepository.Save(record)
@@ -287,6 +296,14 @@ func (service *Service) SubmitAnswerFeedback(ctx context.Context, actor identity
 	}
 
 	savedFeedback := service.feedbackRepository.Save(feedback)
+	if ticketAction == AnswerFeedbackTicketActionTicketCreated && ticketID != "" {
+		service.publishEscalationNotification(ctx, actor, ticket.Ticket{
+			ID:             ticketID,
+			OrganizationID: actor.OrganizationID,
+			RequesterID:    intakeRecord.RequesterID,
+			Title:          buildUnifiedIntakeTicketTitle(intakeRecord.Question),
+		}, intakeRecord.Question, "feedback_unresolved")
+	}
 	return AnswerFeedbackResult{
 		FeedbackID:   savedFeedback.ID,
 		IntakeID:     savedFeedback.IntakeID,
@@ -380,6 +397,29 @@ func (service *Service) GenerateTicketAssist(ctx context.Context, actor identity
 		Citations:          knowledgeResult.Citations,
 		RecordedCommentID:  recordedComment.ID,
 	}, nil
+}
+
+func (service *Service) publishEscalationNotification(ctx context.Context, actor identity.IdentityContext, createdTicket ticket.Ticket, question string, source string) {
+	if service.notificationPublisher == nil {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// AI 升级通知的目标是把“自助失败已进入人工流程”明确触达出去，因此这里最佳努力发送，但不影响建单结果本身。
+	_ = service.notificationPublisher.Publish(ctx, notify.Event{
+		Type:             notify.EventTypeAIEscalated,
+		OrganizationID:   actor.OrganizationID,
+		TicketID:         createdTicket.ID,
+		ActorID:          actor.UserID,
+		RecipientUserIDs: uniqueRecipientUserIDs(actor.UserID, createdTicket.RequesterID),
+		Subject:          "AI 已升级为人工跟进",
+		Content:          fmt.Sprintf("问题“%s”已升级为人工工单，当前工单号为 %s。", strings.TrimSpace(question), createdTicket.ID),
+		Metadata: map[string]string{
+			"source": source,
+		},
+		CreatedAt: time.Now(),
+	})
 }
 
 // TemplateAnswerGenerator 先用可解释的模板式回答把接口契约稳定下来，后续可平滑替换成真实 LLM 生成器。
@@ -552,6 +592,23 @@ func buildReplyDraft(input TicketAnalysisInput) string {
 		return "您好，已收到您的问题，我们正在进一步排查。当前知识库暂无足够依据可靠回答该问题，建议转人工深入处理，我们会继续跟进。"
 	}
 	return fmt.Sprintf("您好，已收到您关于“%s”的反馈。根据当前知识库建议，%s 如仍未恢复，请继续反馈具体现象，我们会进一步协助处理。", strings.TrimSpace(input.Ticket.Title), strings.TrimSpace(input.KnowledgeAnswer.Answer))
+}
+
+func uniqueRecipientUserIDs(userIDs ...string) []string {
+	seen := make(map[string]struct{}, len(userIDs))
+	recipients := make([]string, 0, len(userIDs))
+	for _, rawUserID := range userIDs {
+		userID := strings.TrimSpace(rawUserID)
+		if userID == "" {
+			continue
+		}
+		if _, exists := seen[userID]; exists {
+			continue
+		}
+		seen[userID] = struct{}{}
+		recipients = append(recipients, userID)
+	}
+	return recipients
 }
 
 func latestTimelineContent(timeline []ticket.TicketTimelineItem) string {

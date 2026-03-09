@@ -34,6 +34,14 @@ func (repository *MemoryUserRepository) FindByEmail(email string) (User, bool) {
 	return user, ok
 }
 
+func (repository *MemoryUserRepository) FindByID(userID string) (User, bool) {
+	repository.mutex.RLock()
+	defer repository.mutex.RUnlock()
+
+	user, ok := repository.usersByID[strings.TrimSpace(userID)]
+	return user, ok
+}
+
 func (repository *MemoryUserRepository) Save(user User) User {
 	repository.mutex.Lock()
 	defer repository.mutex.Unlock()

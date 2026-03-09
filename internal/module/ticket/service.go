@@ -1,6 +1,7 @@
 package ticket
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -8,14 +9,15 @@ import (
 	"time"
 
 	"github.com/Haimbeau1o/zld-supportpilot/internal/module/identity"
+	"github.com/Haimbeau1o/zld-supportpilot/internal/module/notify"
 )
 
 var (
-	ErrTicketNotFound               = errors.New("ticket not found")
-	ErrTicketForbidden              = errors.New("ticket forbidden")
-	ErrInvalidTicketInput           = errors.New("invalid ticket input")
-	ErrInvalidStatusTransition      = errors.New("invalid ticket status transition")
-	ErrTicketCollaborationDisabled  = errors.New("ticket collaboration disabled")
+	ErrTicketNotFound              = errors.New("ticket not found")
+	ErrTicketForbidden             = errors.New("ticket forbidden")
+	ErrInvalidTicketInput          = errors.New("invalid ticket input")
+	ErrInvalidStatusTransition     = errors.New("invalid ticket status transition")
+	ErrTicketCollaborationDisabled = errors.New("ticket collaboration disabled")
 )
 
 type CreateTicketInput struct {
@@ -50,16 +52,27 @@ type CollaborationDependencies struct {
 
 type ServiceOption func(*Service)
 
+type NotificationPublisher interface {
+	Publish(ctx context.Context, event notify.Event) error
+}
+
 type Service struct {
-	ticketRepository  TicketRepository
-	commentRepository TicketCommentRepository
-	auditRepository   TicketAuditEventRepository
+	ticketRepository      TicketRepository
+	commentRepository     TicketCommentRepository
+	auditRepository       TicketAuditEventRepository
+	notificationPublisher NotificationPublisher
 }
 
 func WithCollaborationDependencies(dependencies CollaborationDependencies) ServiceOption {
 	return func(service *Service) {
 		service.commentRepository = dependencies.CommentRepository
 		service.auditRepository = dependencies.AuditRepository
+	}
+}
+
+func WithNotificationPublisher(publisher NotificationPublisher) ServiceOption {
+	return func(service *Service) {
+		service.notificationPublisher = publisher
 	}
 }
 
@@ -242,6 +255,7 @@ func (service *Service) AssignTicket(actor identity.IdentityContext, input Assig
 	ticket.UpdatedAt = time.Now()
 	ticket = service.ticketRepository.Save(ticket)
 	service.recordAuditEvent(ticket, actor.UserID, TicketAuditEventTypeAssignmentChanged, "工单指派已更新", fromAssigneeID, ticket.AssigneeID)
+	service.publishAssignmentNotification(ticket, actor.UserID, fromAssigneeID)
 	return ticket, nil
 }
 
@@ -264,7 +278,67 @@ func (service *Service) TransitionTicketStatus(actor identity.IdentityContext, i
 	ticket.UpdatedAt = time.Now()
 	ticket = service.ticketRepository.Save(ticket)
 	service.recordAuditEvent(ticket, actor.UserID, TicketAuditEventTypeStatusChanged, "工单状态已更新", string(fromStatus), string(ticket.Status))
+	service.publishStatusChangeNotification(ticket, actor.UserID, fromStatus)
 	return ticket, nil
+}
+
+func (service *Service) publishAssignmentNotification(ticket Ticket, actorID string, fromAssigneeID string) {
+	if service.notificationPublisher == nil {
+		return
+	}
+	// 通知是工单主流程的旁路能力：这里即便渠道失败，也不能把已经成功的分派操作回滚掉。
+	_ = service.notificationPublisher.Publish(context.Background(), notify.Event{
+		Type:             notify.EventTypeTicketAssigned,
+		OrganizationID:   ticket.OrganizationID,
+		TicketID:         ticket.ID,
+		ActorID:          actorID,
+		RecipientUserIDs: uniqueRecipientUserIDs(ticket.RequesterID, ticket.AssigneeID),
+		Subject:          "工单已分派",
+		Content:          fmt.Sprintf("工单《%s》已分派给 %s。", ticket.Title, ticket.AssigneeID),
+		Metadata: map[string]string{
+			"from_assignee_id": strings.TrimSpace(fromAssigneeID),
+			"to_assignee_id":   strings.TrimSpace(ticket.AssigneeID),
+		},
+		CreatedAt: time.Now(),
+	})
+}
+
+func (service *Service) publishStatusChangeNotification(ticket Ticket, actorID string, fromStatus TicketStatus) {
+	if service.notificationPublisher == nil {
+		return
+	}
+	// 状态通知用于触达 requester / assignee，但其失败不应影响工单状态已经成功流转这一事实。
+	_ = service.notificationPublisher.Publish(context.Background(), notify.Event{
+		Type:             notify.EventTypeTicketStatusChanged,
+		OrganizationID:   ticket.OrganizationID,
+		TicketID:         ticket.ID,
+		ActorID:          actorID,
+		RecipientUserIDs: uniqueRecipientUserIDs(ticket.RequesterID, ticket.AssigneeID),
+		Subject:          "工单状态已更新",
+		Content:          fmt.Sprintf("工单《%s》状态已从 %s 变更为 %s。", ticket.Title, fromStatus, ticket.Status),
+		Metadata: map[string]string{
+			"from_status": string(fromStatus),
+			"to_status":   string(ticket.Status),
+		},
+		CreatedAt: time.Now(),
+	})
+}
+
+func uniqueRecipientUserIDs(userIDs ...string) []string {
+	seen := make(map[string]struct{}, len(userIDs))
+	recipients := make([]string, 0, len(userIDs))
+	for _, rawUserID := range userIDs {
+		userID := strings.TrimSpace(rawUserID)
+		if userID == "" {
+			continue
+		}
+		if _, exists := seen[userID]; exists {
+			continue
+		}
+		seen[userID] = struct{}{}
+		recipients = append(recipients, userID)
+	}
+	return recipients
 }
 
 func (service *Service) recordAuditEvent(ticket Ticket, actorID string, eventType TicketAuditEventType, content string, fromValue string, toValue string) {

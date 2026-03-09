@@ -24,6 +24,7 @@
 - `internal/module/ticket`：工单、评论、状态流转
 - `internal/module/knowledge`：知识库、文档、切块、索引
 - `internal/module/ai`：RAG、Prompt、AI 工作流
+- `internal/module/notify`：邮件 / Webhook 通知抽象与触达渠道
 - `pkg/llm`：模型抽象层
 - `deployments/docker`：本地依赖环境
 
@@ -65,6 +66,7 @@
 - 基于租户角色的 RBAC 权限映射
 - 基于显式状态机的工单主流程
 - 基于已解决工单 -> 知识候选 -> 审核入库的知识沉淀链路
+- 基于邮件 / Webhook 双渠道的工单分派、状态变化、AI 升级通知
 - 基于知识库容器与元数据记录的文档上传链路
 - 基于后台 worker 的异步文档处理流水线（解析 / 切块 / 索引）
 - 基于内存向量检索与引用返回的 RAG 回答接口
@@ -129,6 +131,9 @@ go run ./cmd/api
 - `POSTGRES_DSN`：PostgreSQL 连接串，在 `postgres` 模式下必填
 - `DOCUMENT_STORAGE_MODE`：文档对象存储模式，支持 `memory` / `filesystem`，默认 `memory`
 - `DOCUMENT_STORAGE_ROOT`：文件系统文档根目录，默认 `data/documents`
+- `NOTIFICATION_EMAIL_ENABLED`：是否启用邮件通知渠道，默认 `true`（本地默认走日志 sender）
+- `NOTIFICATION_WEBHOOK_URLS`：Webhook 通知地址，多个地址用逗号分隔，默认空
+- `NOTIFICATION_WEBHOOK_TIMEOUT_SECONDS`：Webhook 调用超时秒数，默认 `3`
 
 ### 启用 PostgreSQL 持久化（本地演示）
 
@@ -381,6 +386,8 @@ curl -X POST http://localhost:8080/api/v1/ai/tickets/<ticket_id>/assist   -H 'Co
 ```
 
 该接口会返回分类建议、处理摘要、回复草稿，并将本次 AI 结果写入工单内部备注；系统不会自动修改工单主数据或自动回复用户。
+
+当启用通知渠道后，工单分派、状态变更，以及 AI 升级为人工跟进时，系统会以“最佳努力”方式触达邮件 / Webhook；即使通知失败，也不会阻塞主业务流程。
 
 ## 演示建议
 

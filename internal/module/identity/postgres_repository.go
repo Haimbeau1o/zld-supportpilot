@@ -31,6 +31,20 @@ func (repository *PostgresUserRepository) FindByEmail(email string) (User, bool)
 	return user, true
 }
 
+func (repository *PostgresUserRepository) FindByID(userID string) (User, bool) {
+	row := repository.db.QueryRow(`SELECT id, name, email, password_hash FROM identity_users WHERE id = $1`, userID)
+
+	user := User{}
+	if err := row.Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return User{}, false
+		}
+		panic(fmt.Sprintf("find user by id from postgres: %v", err))
+	}
+
+	return user, true
+}
+
 func (repository *PostgresUserRepository) Save(user User) User {
 	if user.ID == "" {
 		user.ID = persistence.NewID("user")

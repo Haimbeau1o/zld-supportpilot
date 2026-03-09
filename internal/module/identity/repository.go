@@ -3,6 +3,7 @@ package identity
 // UserRepository 定义用户数据访问能力。
 type UserRepository interface {
 	FindByEmail(email string) (User, bool)
+	FindByID(userID string) (User, bool)
 	Save(user User) User
 }
 
