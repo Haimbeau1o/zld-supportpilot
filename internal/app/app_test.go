@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	stdhttp "net/http"
 	"net/http/httptest"
@@ -21,6 +22,11 @@ type appLoginResponse struct {
 
 type appKnowledgeBaseResponse struct {
 	ID string `json:"id"`
+}
+
+type appUnifiedIntakeResponse struct {
+	ResultType string `json:"result_type"`
+	TicketID   string `json:"ticket_id"`
 }
 
 func TestNewWiresAuthRoutes(t *testing.T) {
@@ -157,6 +163,58 @@ func TestNewWiresKnowledgeRoutes(t *testing.T) {
 
 	if uploadRecorder.Code != stdhttp.StatusCreated {
 		t.Fatalf("expected upload status %d, got %d, body=%s", stdhttp.StatusCreated, uploadRecorder.Code, uploadRecorder.Body.String())
+	}
+}
+
+func TestNewWiresAIIntakeRoute(t *testing.T) {
+	t.Setenv("AUTH_SIGNING_KEY", "test-signing-key")
+	t.Setenv("AUTH_TOKEN_TTL_SECONDS", "3600")
+
+	application, accessToken := bootstrapLoggedInApplication(t)
+	defer application.Close()
+
+	createKnowledgeBaseRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/knowledge/bases",
+		bytes.NewBufferString(`{"name":"IT 支持知识库","description":"用于沉淀 IT 文档"}`),
+	)
+	createKnowledgeBaseRequest.Header.Set("Content-Type", "application/json")
+	createKnowledgeBaseRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	createKnowledgeBaseRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(createKnowledgeBaseRecorder, createKnowledgeBaseRequest)
+
+	if createKnowledgeBaseRecorder.Code != stdhttp.StatusCreated {
+		t.Fatalf("expected knowledge base status %d, got %d, body=%s", stdhttp.StatusCreated, createKnowledgeBaseRecorder.Code, createKnowledgeBaseRecorder.Body.String())
+	}
+
+	var knowledgeBaseResponse appKnowledgeBaseResponse
+	if err := json.NewDecoder(createKnowledgeBaseRecorder.Body).Decode(&knowledgeBaseResponse); err != nil {
+		t.Fatalf("decode knowledge base response: %v", err)
+	}
+
+	intakeRequest := httptest.NewRequest(
+		stdhttp.MethodPost,
+		"/api/v1/ai/intakes",
+		bytes.NewBufferString(fmt.Sprintf(`{"knowledge_base_id":"%s","question":"VPN 无法连接怎么办？","top_k":2}`, knowledgeBaseResponse.ID)),
+	)
+	intakeRequest.Header.Set("Content-Type", "application/json")
+	intakeRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	intakeRecorder := httptest.NewRecorder()
+	application.server.Handler.ServeHTTP(intakeRecorder, intakeRequest)
+
+	if intakeRecorder.Code != stdhttp.StatusOK {
+		t.Fatalf("expected intake status %d, got %d, body=%s", stdhttp.StatusOK, intakeRecorder.Code, intakeRecorder.Body.String())
+	}
+
+	var response appUnifiedIntakeResponse
+	if err := json.NewDecoder(intakeRecorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode intake response: %v", err)
+	}
+	if response.ResultType != "ticket_created" {
+		t.Fatalf("expected result type ticket_created, got %q", response.ResultType)
+	}
+	if response.TicketID == "" {
+		t.Fatalf("expected ticket id to be returned")
 	}
 }
 

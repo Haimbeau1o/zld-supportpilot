@@ -16,6 +16,7 @@ import (
 
 type aiService interface {
 	AskKnowledgeQuestion(ctx context.Context, actor identity.IdentityContext, input ai.AskKnowledgeQuestionInput) (ai.AnswerResult, error)
+	HandleUnifiedIntake(ctx context.Context, actor identity.IdentityContext, input ai.UnifiedIntakeInput) (ai.UnifiedIntakeResult, error)
 	GenerateTicketAssist(ctx context.Context, actor identity.IdentityContext, input ai.GenerateTicketAssistInput) (ai.TicketAssistResult, error)
 }
 
@@ -30,6 +31,12 @@ type AIHandler struct {
 type askKnowledgeQuestionRequest struct {
 	Question string `json:"question"`
 	TopK     int    `json:"top_k"`
+}
+
+type unifiedIntakeRequest struct {
+	KnowledgeBaseID string `json:"knowledge_base_id"`
+	Question        string `json:"question"`
+	TopK            int    `json:"top_k"`
 }
 
 type generateTicketAssistRequest struct {
@@ -48,6 +55,15 @@ type aiAnswerResponse struct {
 	Answer     string               `json:"answer"`
 	Confidence float64              `json:"confidence"`
 	Citations  []aiCitationResponse `json:"citations"`
+}
+
+type aiUnifiedIntakeResponse struct {
+	ResultType   ai.UnifiedIntakeResultType `json:"result_type"`
+	AnswerStatus ai.AnswerStatus            `json:"answer_status"`
+	Answer       string                     `json:"answer"`
+	Confidence   float64                    `json:"confidence"`
+	Citations    []aiCitationResponse       `json:"citations"`
+	TicketID     string                     `json:"ticket_id,omitempty"`
 }
 
 type aiTicketAssistResponse struct {
@@ -88,6 +104,32 @@ func (handler AIHandler) AskKnowledgeQuestion(writer stdhttp.ResponseWriter, req
 	}
 
 	writeJSON(writer, stdhttp.StatusOK, newAIAnswerResponse(result))
+}
+
+func (handler AIHandler) HandleUnifiedIntake(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
+	actor, ok := identityContextFromContext(request.Context())
+	if !ok {
+		writeError(writer, stdhttp.StatusUnauthorized, "unauthorized", "当前请求缺少身份上下文")
+		return
+	}
+
+	var input unifiedIntakeRequest
+	if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+		writeError(writer, stdhttp.StatusBadRequest, "invalid_request", "请求体不是合法的 JSON")
+		return
+	}
+
+	result, err := handler.aiService.HandleUnifiedIntake(request.Context(), actor, ai.UnifiedIntakeInput{
+		KnowledgeBaseID: strings.TrimSpace(input.KnowledgeBaseID),
+		Question:        input.Question,
+		TopK:            input.TopK,
+	})
+	if err != nil {
+		handleAIError(writer, err)
+		return
+	}
+
+	writeJSON(writer, stdhttp.StatusOK, newAIUnifiedIntakeResponse(result))
 }
 
 func (handler AIHandler) GenerateTicketAssist(writer stdhttp.ResponseWriter, request *stdhttp.Request) {
@@ -131,6 +173,27 @@ func newAIAnswerResponse(result ai.AnswerResult) aiAnswerResponse {
 		Answer:     result.Answer,
 		Confidence: result.Confidence,
 		Citations:  citations,
+	}
+}
+
+func newAIUnifiedIntakeResponse(result ai.UnifiedIntakeResult) aiUnifiedIntakeResponse {
+	citations := make([]aiCitationResponse, 0, len(result.Citations))
+	for _, citation := range result.Citations {
+		citations = append(citations, aiCitationResponse{
+			ChunkID:    citation.ChunkID,
+			DocumentID: citation.DocumentID,
+			Score:      citation.Score,
+			Content:    citation.Content,
+		})
+	}
+
+	return aiUnifiedIntakeResponse{
+		ResultType:   result.ResultType,
+		AnswerStatus: result.AnswerStatus,
+		Answer:       result.Answer,
+		Confidence:   result.Confidence,
+		Citations:    citations,
+		TicketID:     result.TicketID,
 	}
 }
 
@@ -185,8 +248,9 @@ func registerAIRoutes(mux *stdhttp.ServeMux, runtime routeRuntime, authDependenc
 	aiHandler := NewAIHandler(aiDependencies.AIService)
 
 	// AI 接口统一运行在鉴权之后，保证知识库与工单的租户归属边界不被绕开。
-	// AI 问答与工单辅助都属于高成本能力，因此当前阶段统一纳入限流边界，避免演示环境被连续请求打爆。
+	// AI 问答、统一受理与工单辅助都属于高成本能力，因此当前阶段统一纳入限流边界，避免演示环境被连续请求打爆。
 	mux.Handle("POST /api/v1/ai/knowledge/bases/{id}/answers", runtime.protectedRateLimited("POST /api/v1/ai/knowledge/bases/{id}/answers", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(aiHandler.AskKnowledgeQuestion)))
+	mux.Handle("POST /api/v1/ai/intakes", runtime.protectedRateLimited("POST /api/v1/ai/intakes", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(aiHandler.HandleUnifiedIntake)))
 	mux.Handle("POST /api/v1/ai/tickets/{id}/assist", runtime.protectedRateLimited("POST /api/v1/ai/tickets/{id}/assist", authMiddleware, identityOrClientRateLimitKey, stdhttp.HandlerFunc(aiHandler.GenerateTicketAssist)))
 	return nil
 }

@@ -13,6 +13,14 @@ const (
 	AnswerStatusDegraded AnswerStatus = "degraded"
 )
 
+// UnifiedIntakeResultType 表示统一受理的最终结果类型。
+type UnifiedIntakeResultType string
+
+const (
+	UnifiedIntakeResultTypeAnswered      UnifiedIntakeResultType = "answered"
+	UnifiedIntakeResultTypeTicketCreated UnifiedIntakeResultType = "ticket_created"
+)
+
 // Citation 表示回答引用的知识片段。
 type Citation struct {
 	ChunkID    string
@@ -27,6 +35,23 @@ type AnswerResult struct {
 	Answer     string
 	Confidence float64
 	Citations  []Citation
+}
+
+// UnifiedIntakeInput 描述统一 AI 受理入口所需输入。
+type UnifiedIntakeInput struct {
+	KnowledgeBaseID string
+	Question        string
+	TopK            int
+}
+
+// UnifiedIntakeResult 描述统一受理返回：要么直接回答，要么已升级工单。
+type UnifiedIntakeResult struct {
+	ResultType   UnifiedIntakeResultType
+	AnswerStatus AnswerStatus
+	Answer       string
+	Confidence   float64
+	Citations    []Citation
+	TicketID     string
 }
 
 // RetrievedChunk 表示检索器返回的候选 chunk 与分数。

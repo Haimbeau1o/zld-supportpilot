@@ -52,6 +52,7 @@
 - `GET /api/v1/knowledge/documents/{id}/tasks`
 - `POST /api/v1/knowledge/documents/{id}/retry`
 - `POST /api/v1/ai/knowledge/bases/{id}/answers`
+- `POST /api/v1/ai/intakes`
 - `POST /api/v1/ai/tickets/{id}/assist`
 - `GET /debug/metrics/http`
 - 环境变量加载与应用装配骨架
@@ -61,6 +62,7 @@
 - 基于知识库容器与元数据记录的文档上传链路
 - 基于后台 worker 的异步文档处理流水线（解析 / 切块 / 索引）
 - 基于内存向量检索与引用返回的 RAG 回答接口
+- 基于“先答后建单”决策的统一 AI 受理入口
 - 基于 `X-Request-ID` 的请求关联与结构化访问日志
 - 基于进程内聚合的 HTTP 指标快照
 - 基于令牌桶的关键路径限流（登录 / 文档上传 / 重试 / AI 问答）
@@ -163,6 +165,7 @@ curl http://localhost:8080/debug/metrics/http
 - `POST /api/v1/knowledge/bases/{id}/documents`
 - `POST /api/v1/knowledge/documents/{id}/retry`
 - `POST /api/v1/ai/knowledge/bases/{id}/answers`
+- `POST /api/v1/ai/intakes`
 - `POST /api/v1/ai/tickets/{id}/assist`
 
 触发限流时会返回：
@@ -281,6 +284,21 @@ curl -X POST http://localhost:8080/api/v1/ai/knowledge/bases/<knowledge_base_id>
     "top_k": 3
   }'
 ```
+
+统一 AI 受理：
+
+```bash
+curl -X POST http://localhost:8080/api/v1/ai/intakes \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <access_token>' \
+  -d '{
+    "knowledge_base_id": "<knowledge_base_id>",
+    "question": "VPN 无法连接怎么办？",
+    "top_k": 3
+  }'
+```
+
+当知识库有足够依据时会直接返回 `answered`；当依据不足时会返回 `ticket_created`，并附带自动创建的 `ticket_id`。
 
 当检索置信度不足时，接口会返回 `degraded` 状态，而不是编造答案。
 
